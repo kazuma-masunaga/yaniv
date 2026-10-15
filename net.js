@@ -391,7 +391,7 @@
     var codeGen = typeof opts.codeGen === 'function' ? opts.codeGen : function () { return randomCode(random); };
     var cpuDelay = Array.isArray(opts.cpuDelay) ? opts.cpuDelay : [600, 900];
 
-    var config = { jokers: 2, limit: 101, cpuLevel: 'normal', seatCount: 3 };
+    var config = { jokers: 2, limit: 101, cpuLevel: 'normal', starter: 'zero', seatCount: 3 };
     var seats = [];
     var state = null;
     var moveNo = 0;
@@ -639,6 +639,7 @@
       if (patch.jokers != null) { if ([0, 1, 2].indexOf(patch.jokers) < 0) throw new Error('jokers'); next.jokers = patch.jokers; }
       if (patch.limit != null) { if ([31, 51, 71, 101].indexOf(patch.limit) < 0) throw new Error('limit'); next.limit = patch.limit; }
       if (patch.cpuLevel != null) { if (['weak', 'normal', 'strong'].indexOf(patch.cpuLevel) < 0) throw new Error('cpuLevel'); next.cpuLevel = patch.cpuLevel; }
+      if (patch.starter != null) { if (['zero', 'highest'].indexOf(patch.starter) < 0) throw new Error('starter'); next.starter = patch.starter; }
       if (patch.seatCount != null) {
         if (!isInt(patch.seatCount) || patch.seatCount < 2 || patch.seatCount > 5) throw new Error('seatCount must be 2-5');
         var highest = 0;
@@ -680,7 +681,7 @@
     host.start = function () {
       if (state) throw new Error('already started');
       var players = playersFromSeats();
-      state = E.createGame({ players: players, jokers: config.jokers, limit: config.limit, cpuLevel: config.cpuLevel }, rng);
+      state = E.createGame({ players: players, jokers: config.jokers, limit: config.limit, cpuLevel: config.cpuLevel, starter: config.starter }, rng);
       state = E.startRound(state, rng);
       moveNo = 0;
       broadcastLobby();
@@ -851,6 +852,7 @@
           jokers: [0, 1, 2].indexOf(cfg.jokers) >= 0 ? cfg.jokers : 2,
           limit: [31, 51, 71, 101].indexOf(cfg.limit) >= 0 ? cfg.limit : 101,
           cpuLevel: ['weak', 'normal', 'strong'].indexOf(cfg.cpuLevel) >= 0 ? cfg.cpuLevel : 'normal',
+          starter: ['zero', 'highest'].indexOf(cfg.starter) >= 0 ? cfg.starter : 'zero',
           seatCount: isInt(cfg.seatCount) ? cfg.seatCount : seats.length
         }
       };
@@ -864,6 +866,7 @@
       if (!isInt(v.currentPlayer) || !isInt(v.round) || !isInt(v.deckCount)) return false;
       if (!Array.isArray(v.discardPile) || !Array.isArray(v.legalMoves) || !Array.isArray(v.takeable)) return false;
       if (!isObj(v.config) || [31, 51, 71, 101].indexOf(v.config.limit) < 0) return false;
+      if (v.config.starter != null && ['zero', 'highest'].indexOf(v.config.starter) < 0) return false;
       for (var i = 0; i < v.players.length; i++) {
         var p = v.players[i];
         if (!isObj(p) || typeof p.name !== 'string' || !isInt(p.handCount) || !isInt(p.score)) return false;

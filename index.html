@@ -471,6 +471,15 @@
           </select>
         </div>
       </div>
+      <div class="row">
+        <div class="field">
+          <label for="opt-starter">次ラウンドの先手</label>
+          <div class="seg" id="opt-starter" role="group" aria-label="次ラウンドの先手">
+            <button type="button" data-starter="zero" aria-pressed="true">0点だった人</button>
+            <button type="button" data-starter="highest" aria-pressed="false">加点が高かった人</button>
+          </div>
+        </div>
+      </div>
 
       <p class="msg" id="lobby-msg" aria-live="polite"></p>
       <button type="button" class="btn-primary" id="btn-start" style="font-size:1.1rem; padding:14px;">ゲーム開始</button>
@@ -484,6 +493,7 @@
           <li>引くのは山札の一番上か、直前の人が捨てた組のカード（連番は両端のみ。端のジョーカーも可）。自分の捨て札からは取れない。</li>
           <li>ヤニブ宣言で全員公開。宣言者と同点以下の人がいれば「ヤニブ返し」: 宣言者は手札+30点、返した人は0点。いなければ宣言者0点。他は手札合計を加算。</li>
           <li>累計が脱落ライン以上で脱落。最後に残った1人が勝ち。前ラウンドで0点だった人が次の先手。</li>
+          <li>「次ラウンドの先手」を「加点が高かった人」にすると、前ラウンドで最も多く加点された人（同点なら宣言者から手番順で先の人）が先手になる。</li>
         </ul>
       </details>
     </div>
@@ -547,6 +557,15 @@
               <option value="normal" selected>普通</option>
               <option value="strong">強</option>
             </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="host-starter">次ラウンドの先手</label>
+            <div class="seg" id="host-starter" role="group" aria-label="次ラウンドの先手">
+              <button type="button" data-starter="zero" aria-pressed="true">0点だった人</button>
+              <button type="button" data-starter="highest" aria-pressed="false">加点が高かった人</button>
+            </div>
           </div>
         </div>
 
@@ -722,7 +741,8 @@
     ],
     jokers: 2,
     limit: 101,
-    cpuLevel: 'normal'
+    cpuLevel: 'normal',
+    starter: 'zero'
   };
 
   function loadSettings() {
@@ -741,6 +761,7 @@
         if ([0, 1, 2].indexOf(s.jokers) >= 0) settings.jokers = s.jokers;
         if ([31, 51, 71, 101].indexOf(s.limit) >= 0) settings.limit = s.limit;
         if (['weak', 'normal', 'strong'].indexOf(s.cpuLevel) >= 0) settings.cpuLevel = s.cpuLevel;
+        if (['zero', 'highest'].indexOf(s.starter) >= 0) settings.starter = s.starter;
       }
     } catch (e) { /* ignore */ }
   }
@@ -799,6 +820,10 @@
     $('opt-jokers').value = String(settings.jokers);
     $('opt-limit').value = String(settings.limit);
     $('opt-level').value = settings.cpuLevel;
+    renderSeg($('opt-starter'), 'starter', settings.starter);
+  }
+  function renderSeg(el, key, value) {
+    el.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset[key] === value)); });
   }
 
   $('player-count').addEventListener('click', function (ev) {
@@ -810,6 +835,12 @@
   $('opt-jokers').addEventListener('change', function (ev) { settings.jokers = +ev.target.value; saveSettings(); });
   $('opt-limit').addEventListener('change', function (ev) { settings.limit = +ev.target.value; saveSettings(); });
   $('opt-level').addEventListener('change', function (ev) { settings.cpuLevel = ev.target.value; saveSettings(); });
+  $('opt-starter').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button');
+    if (!b || ['zero', 'highest'].indexOf(b.dataset.starter) < 0) return;
+    settings.starter = b.dataset.starter;
+    saveSettings(); renderLobby();
+  });
 
   // ---------- screens ----------
   var SCREENS = ['screen-lobby', 'screen-cover', 'screen-game', 'screen-round', 'screen-over'];
@@ -1366,11 +1397,14 @@
       if (a === w) return -1; if (b === w) return 1;
       return V.players[a].score - V.players[b].score;
     });
+    var lastEntries = (V.roundResult && Array.isArray(V.roundResult.entries)) ? V.roundResult.entries : [];
     order.forEach(function (i) {
       var p = V.players[i];
+      var en = lastEntries[i];
+      var added = (en && en.wasActive !== false) ? num(en.added) : null;
       var d = document.createElement('div');
       d.className = 'frow nums' + (i === w ? ' win' : '');
-      d.innerHTML = '<span><b>' + esc(p.name) + '</b>' + (i === w ? ' <span class="badge declarer">勝者</span>' : ' <span class="badge out">脱落</span>') + '</span><span><b>' + num(p.score) + '</b> 点</span>';
+      d.innerHTML = '<span><b>' + esc(p.name) + '</b>' + (i === w ? ' <span class="badge declarer">勝者</span>' : ' <span class="badge out">脱落</span>') + '</span><span><b>' + num(p.score) + '</b> 点' + (added != null ? '<span class="muted small">（+' + added + '）</span>' : '') + '</span>';
       list.appendChild(d);
     });
     $('btn-again').hidden = mode === 'client';
@@ -1401,7 +1435,7 @@
     }
     saveSettings();
     mode = 'local';
-    newGame({ players: players, jokers: settings.jokers, limit: settings.limit, cpuLevel: settings.cpuLevel });
+    newGame({ players: players, jokers: settings.jokers, limit: settings.limit, cpuLevel: settings.cpuLevel, starter: settings.starter });
   });
 
   // =====================================================================
@@ -1518,7 +1552,8 @@
 
   function configText(cfg) {
     var lv = { weak: '弱', normal: '普通', strong: '強' }[cfg.cpuLevel] || cfg.cpuLevel;
-    return '人数枠 ' + cfg.seatCount + '・ジョーカー ' + (cfg.jokers ? cfg.jokers + '枚' : 'なし') + '・脱落ライン ' + cfg.limit + '点・CPU ' + lv;
+    var st = cfg.starter === 'highest' ? '加点が高かった人' : '0点だった人';
+    return '人数枠 ' + cfg.seatCount + '・ジョーカー ' + (cfg.jokers ? cfg.jokers + '枚' : 'なし') + '・脱落ライン ' + cfg.limit + '点・CPU ' + lv + '・先手 ' + st;
   }
 
   // ---------- host ----------
@@ -1528,6 +1563,7 @@
     $('host-jokers').value = String(lobby.config.jokers);
     $('host-limit').value = String(lobby.config.limit);
     $('host-level').value = lobby.config.cpuLevel;
+    renderSeg($('host-starter'), 'starter', lobby.config.starter || 'zero');
     renderSeatList($('host-seat-list'), lobby, !lobby.inGame);
     var humans = lobby.seats.filter(function (s) { return s.type === 'human'; }).length;
     $('btn-host-start').disabled = lobby.inGame || humans < 1;
@@ -1600,6 +1636,11 @@
   $('host-jokers').addEventListener('change', function (ev) { hostSetConfig({ jokers: +ev.target.value }); });
   $('host-limit').addEventListener('change', function (ev) { hostSetConfig({ limit: +ev.target.value }); });
   $('host-level').addEventListener('change', function (ev) { hostSetConfig({ cpuLevel: ev.target.value }); });
+  $('host-starter').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button');
+    if (!b || ['zero', 'highest'].indexOf(b.dataset.starter) < 0) return;
+    hostSetConfig({ starter: b.dataset.starter });
+  });
 
   $('btn-host-start').addEventListener('click', function () {
     if (!host) return;

@@ -222,12 +222,17 @@
     if ([31, 51, 71, 101].indexOf(limit) < 0) throw new Error('limit must be 31/51/71/101');
     var cpuLevel = config.cpuLevel || 'normal';
     if (['weak', 'normal', 'strong'].indexOf(cpuLevel) < 0) throw new Error('bad cpuLevel');
+    // starter: who opens the next round.
+    //   'zero'    - the player who scored 0 this round (yaniv / assaf winner)  [default]
+    //   'highest' - the player who was charged the most points this round
+    var starter = config.starter == null ? 'zero' : config.starter;
+    if (['zero', 'highest'].indexOf(starter) < 0) throw new Error('bad starter');
     var players = config.players.map(function (p, i) {
       var type = p.type === 'cpu' ? 'cpu' : 'human';
       var name = (p.name != null && String(p.name).trim()) || (type === 'cpu' ? 'CPU ' + (i + 1) : 'Player ' + (i + 1));
       return { name: String(name).slice(0, 20), type: type };
     });
-    return { players: players, jokers: jokers, limit: limit, cpuLevel: cpuLevel };
+    return { players: players, jokers: jokers, limit: limit, cpuLevel: cpuLevel, starter: starter };
   }
 
   function createGame(config, rng) {
@@ -461,15 +466,31 @@
       entries.push(entry);
     }
     var zeroPlayer = assaf != null ? assaf : declarer;
+    var starter = zeroPlayer;
+    if (s.config.starter === 'highest') {
+      // Highest `added` this round opens the next one. Ties go to whoever
+      // comes first in turn order seen from the declarer (declarer itself
+      // first). Players eliminated this round are skipped; if nobody
+      // qualifies fall back to the zero scorer.
+      var bestIdx = null;
+      var bestAdded = -Infinity;
+      for (var st = 0; st < n; st++) {
+        var ci = (declarer + st) % n;
+        var ce = entries[ci];
+        if (!ce.wasActive || ce.eliminated) continue;
+        if (ce.added > bestAdded) { bestAdded = ce.added; bestIdx = ci; }
+      }
+      if (bestIdx != null) starter = bestIdx;
+    }
     s.roundResult = {
       round: s.round,
       declarer: declarer,
       declarerValue: dv,
       assaf: assaf,
       entries: entries,
-      nextStarter: zeroPlayer
+      nextStarter: starter
     };
-    s.nextStarter = zeroPlayer;
+    s.nextStarter = starter;
     var remaining = activeIndices(s);
     if (remaining.length <= 1) {
       s.phase = 'gameOver';

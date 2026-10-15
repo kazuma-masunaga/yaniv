@@ -300,6 +300,84 @@ test('elimination at/above limit, game over when one remains, starter is zero sc
   assert.equal(s4.players[2].eliminated, true);
 });
 
+// ---------- starter: 'highest' ----------
+function highestFixture(args) {
+  const s = fixture(args);
+  s.config.starter = 'highest';
+  return s;
+}
+
+test("starter 'highest': the player with the largest added score opens the next round", () => {
+  // declarer 0 (value 7) succeeds. P1 adds 19, P2 adds 10 -> P1 starts.
+  const s = highestFixture({
+    hands: [[C('3', 'S'), C('4', 'D')], [C('9', 'S'), C('K', 'D')], [C('2', 'C'), C('8', 'C')]],
+    deck: [C('A', 'C')],
+    discardTop: { kind: 'single', cards: [C('5', 'H')] }
+  });
+  const s2 = E.applyMove(s, { type: 'yaniv' }, E.createRng(1));
+  assert.equal(s2.config.starter, 'highest');
+  assert.deepEqual(s2.roundResult.entries.map((e) => e.added), [0, 19, 10]);
+  assert.equal(s2.nextStarter, 1);
+  assert.equal(s2.roundResult.nextStarter, 1);
+  const s3 = E.startRound(s2, E.createRng(5));
+  assert.equal(s3.currentPlayer, 1);
+  // caught declarer (value + 30) is the highest -> declarer starts
+  const t = highestFixture({
+    hands: [[C('3', 'S'), C('4', 'D')], [C('9', 'S'), C('K', 'D')], [C('2', 'C'), C('5', 'C')]],
+    deck: [C('A', 'C')],
+    discardTop: { kind: 'single', cards: [C('5', 'H')] }
+  });
+  const t2 = E.applyMove(t, { type: 'yaniv' }, E.createRng(1));
+  assert.deepEqual(t2.roundResult.entries.map((e) => e.added), [37, 19, 0]);
+  assert.equal(t2.nextStarter, 0);
+});
+
+test("starter 'highest': ties resolved in turn order from the declarer", () => {
+  // declarer 1 (value 6) succeeds. P2 and P0 both add 20 -> P2 is first after the declarer.
+  const s = highestFixture({
+    hands: [[C('K', 'S'), C('Q', 'D')], [C('6', 'S')], [C('J', 'C'), C('10', 'C')], [C('8', 'H')]],
+    deck: [C('A', 'S')],
+    discardTop: { kind: 'single', cards: [C('5', 'H')] },
+    currentPlayer: 1
+  });
+  const s2 = E.applyMove(s, { type: 'yaniv' }, E.createRng(1));
+  assert.deepEqual(s2.roundResult.entries.map((e) => e.added), [20, 0, 20, 8]);
+  assert.equal(s2.nextStarter, 2);
+  assert.equal(E.startRound(s2, E.createRng(5)).currentPlayer, 2);
+});
+
+test("starter 'highest': an eliminated top scorer is skipped in favour of the runner-up", () => {
+  // declarer 0 succeeds. P1 adds 19 -> 101 eliminated; P2 adds 10 -> P2 starts.
+  const s = highestFixture({
+    hands: [[C('3', 'S')], [C('9', 'S'), C('K', 'D')], [C('2', 'C'), C('8', 'C')]],
+    deck: [C('A', 'C')],
+    discardTop: { kind: 'single', cards: [C('5', 'H')] },
+    scores: [10, 82, 70],
+    limit: 101
+  });
+  const s2 = E.applyMove(s, { type: 'yaniv' }, E.createRng(1));
+  assert.equal(s2.phase, 'roundEnd');
+  assert.equal(s2.players[1].eliminated, true);
+  assert.equal(s2.nextStarter, 2);
+  const s3 = E.startRound(s2, E.createRng(2));
+  assert.equal(s3.currentPlayer, 2);
+});
+
+test("starter: validateConfig defaults to 'zero' and rejects unknown values; 'zero' keeps the old behaviour", () => {
+  const g = E.createGame(baseConfig(2), E.createRng(1));
+  assert.equal(g.config.starter, 'zero');
+  assert.equal(E.createGame(baseConfig(2, { starter: 'highest' }), E.createRng(1)).config.starter, 'highest');
+  assert.throws(() => E.createGame(baseConfig(2, { starter: 'random' }), E.createRng(1)), /starter/);
+  // same fixture as the first 'highest' test but with 'zero': the declarer (0 added) starts
+  const s = fixture({
+    hands: [[C('3', 'S'), C('4', 'D')], [C('9', 'S'), C('K', 'D')], [C('2', 'C'), C('8', 'C')]],
+    deck: [C('A', 'C')],
+    discardTop: { kind: 'single', cards: [C('5', 'H')] }
+  });
+  assert.equal(s.config.starter, 'zero');
+  assert.equal(E.applyMove(s, { type: 'yaniv' }, E.createRng(1)).nextStarter, 0);
+});
+
 test('eliminated players are skipped in turn order', () => {
   const s = fixture({
     hands: [[C('9', 'S'), C('K', 'D')], [], [C('3', 'S'), C('4', 'S')]],

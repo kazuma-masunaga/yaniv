@@ -493,6 +493,46 @@ test('host.close notifies clients with closed; setConfig refuses to shrink below
 });
 
 
+test('setConfig: starter propagates to lobby broadcasts, createGame config and client views', async () => {
+  const { host, clients, hub } = await setupRoom({ names: ['A'], config: { seatCount: 2 } });
+  assert.equal(host.config().starter, 'zero', 'default is zero');
+  assert.equal(last(clients[0].lobbies).config.starter, 'zero');
+  assert.throws(() => host.setConfig({ starter: 'random' }), /starter/);
+  host.setConfig({ starter: 'highest' });
+  await hub.settle();
+  assert.equal(host.config().starter, 'highest');
+  assert.equal(last(clients[0].lobbies).config.starter, 'highest');
+  host.start();
+  await hub.settle();
+  assert.equal(host.state().config.starter, 'highest');
+  assert.equal(last(clients[0].views).config.starter, 'highest');
+  assert.throws(() => host.setConfig({ starter: 'zero' }), /ゲーム中/);
+  host.close();
+});
+
+test('client view validation: config.starter must be zero/highest when present', async () => {
+  const hub = N.createMemoryHub();
+  const ht = hub.createTransport();
+  await ht.open(N.peerIdFor('SSSSSS'));
+  let hc = null;
+  ht.onConnection((cn) => { hc = cn; cn.onMessage(() => {}); });
+  const v = N.createClient({ transport: hub.createTransport(), roomCode: 'SSSSSS', name: 'V', connectTimeoutMs: 0, backoff: [1] });
+  const views = [];
+  v.onView((x) => views.push(x));
+  v.connect().catch(() => {});
+  await hub.settle();
+  hc.send({ t: 'joined', seat: 0, seatToken: 'abcdefghijklmnop', roomCode: 'SSSSSS' });
+  const base = () => ({ phase: 'playing', seat: 0, players: [{ name: 'a', handCount: 1, score: 0, hand: [] }, { name: 'b', handCount: 1, score: 0 }], currentPlayer: 0, round: 1, deckCount: 1, discardPile: [], legalMoves: [], takeable: [], config: { limit: 101 } });
+  let x = base(); x.config.starter = '<b>'; hc.send({ t: 'view', view: x });
+  await hub.settle();
+  assert.equal(views.length, 0);
+  x = base(); x.config.starter = 'highest'; hc.send({ t: 'view', view: x });
+  x = base(); hc.send({ t: 'view', view: x }); // absent is fine
+  await hub.settle();
+  assert.equal(views.length, 2);
+  v.leave(); ht.close();
+});
+
 // ---------- review regressions ----------
 test('#2 restart after replaceWithCpu keeps that seat as CPU (no human seat with nobody behind it)', async () => {
   const { host, clients, hub } = await setupRoom({ names: ['A'], config: { seatCount: 3, limit: 31 }, seed: 21 });
