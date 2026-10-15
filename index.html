@@ -1,0 +1,1754 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ヤニブ</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&amp;family=Nunito:wght@400;600;700;800&amp;display=swap">
+<style>
+  /* Layout: single column app. Lobby is a form; table screen is header (opponents) / felt (deck + discard) / tray (hand + actions). */
+  :root {
+    --bg: #f6f1e7;
+    --surface: #fffdf8;
+    --surface-2: #efe7d8;
+    --fg: #2b2622;
+    --muted: #7a6f63;
+    --line: #dccfb9;
+    --accent: #e0772f;
+    --accent-fg: #fffdf8;
+    --accent-soft: #fbe6d3;
+    --felt: #4f8a6a;
+    --felt-deep: #3e6f55;
+    --felt-fg: #f3f8f3;
+    --card-bg: #ffffff;
+    --card-line: #c9bda7;
+    --card-back: #2f5e8f;
+    --card-back-2: #6a9fd0;
+    --red: #d0342c;
+    --black: #1f1d1b;
+    --joker: #7c3fbf;
+    --joker-soft: #ecdffa;
+    --good: #2f8f5b;
+    --good-soft: #d8f0e0;
+    --bad: #c23b3b;
+    --bad-soft: #f8dcdc;
+    --warn: #b8860b;
+    --shadow: rgba(60, 40, 10, 0.18);
+    --focus: #2f5e8f;
+    --font-display: 'Baloo 2', 'Hiragino Maru Gothic ProN', 'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', system-ui, sans-serif;
+    --font-body: 'Nunito', 'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1d1a17;
+      --surface: #28241f;
+      --surface-2: #332d27;
+      --fg: #f1e9dc;
+      --muted: #a89c8c;
+      --line: #4a4138;
+      --accent: #f08a44;
+      --accent-fg: #1d1a17;
+      --accent-soft: #4a3222;
+      --felt: #2f5a44;
+      --felt-deep: #254736;
+      --felt-fg: #e4f0e6;
+      --card-bg: #f6f1e7;
+      --card-line: #a39883;
+      --card-back: #27496e;
+      --card-back-2: #4f7fae;
+      --red: #d94a42;
+      --black: #1f1d1b;
+      --joker: #a56ee6;
+      --joker-soft: #3a2a50;
+      --good: #4fb97e;
+      --good-soft: #233c2e;
+      --bad: #e06060;
+      --bad-soft: #4a2626;
+      --warn: #d9a93a;
+      --shadow: rgba(0, 0, 0, 0.45);
+      --focus: #7fb0e0;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1d1a17;
+    --surface: #28241f;
+    --surface-2: #332d27;
+    --fg: #f1e9dc;
+    --muted: #a89c8c;
+    --line: #4a4138;
+    --accent: #f08a44;
+    --accent-fg: #1d1a17;
+    --accent-soft: #4a3222;
+    --felt: #2f5a44;
+    --felt-deep: #254736;
+    --felt-fg: #e4f0e6;
+    --card-bg: #f6f1e7;
+    --card-line: #a39883;
+    --card-back: #27496e;
+    --card-back-2: #4f7fae;
+    --red: #d94a42;
+    --black: #1f1d1b;
+    --joker: #a56ee6;
+    --joker-soft: #3a2a50;
+    --good: #4fb97e;
+    --good-soft: #233c2e;
+    --bad: #e06060;
+    --bad-soft: #4a2626;
+    --warn: #d9a93a;
+    --shadow: rgba(0, 0, 0, 0.45);
+    --focus: #7fb0e0;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    margin: 0;
+  }
+  .app {
+    max-width: 720px;
+    margin: 0 auto;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 16px 32px;
+    min-width: 0;
+  }
+  h1, h2, h3 { font-family: var(--font-display); line-height: 1.15; margin: 0; text-wrap: balance; }
+  h1 { font-size: 2.4rem; font-weight: 800; letter-spacing: 0.01em; }
+  h2 { font-size: 1.35rem; font-weight: 800; }
+  h3 { font-size: 1.05rem; font-weight: 700; }
+  p { margin: 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 0.85rem; }
+  .eyebrow { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); font-weight: 700; }
+  .nums { font-variant-numeric: tabular-nums; }
+
+  button {
+    font: inherit;
+    font-weight: 700;
+    color: var(--fg);
+    background: var(--surface);
+    border: 2px solid var(--line);
+    border-radius: 14px;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+    touch-action: manipulation;
+  }
+  button:hover:not(:disabled) { transform: translateY(-1px); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, .card:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .btn-yaniv {
+    background: var(--fg); color: var(--bg); border-color: var(--fg);
+    font-family: var(--font-display); font-size: 1.15rem; letter-spacing: 0.04em;
+  }
+  .btn-ghost { background: transparent; }
+  .btn-sm { padding: 6px 10px; border-radius: 10px; font-size: 0.85rem; }
+
+  input[type="text"], select {
+    font: inherit;
+    color: var(--fg);
+    background: var(--surface);
+    border: 2px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 10px;
+    min-width: 0;
+    width: 100%;
+  }
+
+  /* ---------- Lobby ---------- */
+  .hero { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+  .hero .tag { font-family: var(--font-display); color: var(--accent); font-weight: 800; }
+  .panel {
+    background: var(--surface);
+    border: 2px solid var(--line);
+    border-radius: 18px;
+    padding: 16px;
+    display: grid;
+    gap: 14px;
+  }
+  .lobby { display: grid; gap: 14px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .field { display: grid; gap: 4px; flex: 1 1 140px; min-width: 0; }
+  .field label { font-size: 0.8rem; font-weight: 700; color: var(--muted); }
+  .seg { display: inline-flex; border: 2px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 8px 14px; background: var(--surface); }
+  .seg button + button { border-left: 2px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+  .slots { display: grid; gap: 8px; }
+  .slot {
+    display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center;
+    padding: 8px 10px; border-radius: 12px; background: var(--surface-2);
+  }
+  .slot .seg button { padding: 6px 12px; font-size: 0.9rem; }
+  details { border-top: 2px dashed var(--line); padding-top: 10px; }
+  summary { cursor: pointer; font-weight: 700; }
+  details ul { margin: 8px 0 0; padding-left: 1.2em; display: grid; gap: 4px; }
+  .rules-note { font-size: 0.9rem; }
+
+  /* ---------- Cards ---------- */
+  .card {
+    position: relative;
+    width: 56px; height: 80px;
+    flex: 0 0 auto;
+    background: var(--card-bg);
+    color: var(--black);
+    border: 2px solid var(--card-line);
+    border-radius: 9px;
+    box-shadow: 0 2px 4px var(--shadow);
+    font-family: var(--font-display);
+    font-weight: 800;
+    display: grid; place-items: center;
+    user-select: none;
+    transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+  }
+  .card .corner { position: absolute; top: 4px; left: 6px; font-size: 0.85rem; line-height: 1; text-align: center; }
+  .card .corner small { display: block; font-size: 0.75rem; }
+  .card .big { font-size: 1.7rem; line-height: 1; margin-top: 10px; }
+  .card.red { color: var(--red); }
+  .card.joker { color: var(--joker); background: linear-gradient(160deg, var(--card-bg), var(--joker-soft)); }
+  .card.joker .big { font-size: 0.78rem; letter-spacing: 0.08em; writing-mode: vertical-rl; margin-top: 0; }
+  .card.joker .corner { font-size: 1.1rem; }
+  .card.sm { width: 42px; height: 60px; border-radius: 7px; }
+  .card.sm .big { font-size: 1.2rem; margin-top: 8px; }
+  .card.sm .corner { font-size: 0.7rem; top: 3px; left: 4px; }
+  .card.sm .corner small { font-size: 0.6rem; }
+  .card.sm.joker .big { font-size: 0.6rem; }
+  .card.back {
+    background:
+      repeating-linear-gradient(45deg, var(--card-back) 0 6px, var(--card-back-2) 6px 8px);
+    border-color: var(--card-back);
+    color: var(--felt-fg);
+  }
+  .card.back .count {
+    background: var(--card-back); border-radius: 8px; padding: 2px 8px;
+    font-size: 0.9rem; font-variant-numeric: tabular-nums;
+  }
+  .card.selectable { cursor: pointer; }
+  .card.selectable:hover { transform: translateY(-3px); }
+  .card.selected { transform: translateY(-12px); border-color: var(--accent); box-shadow: 0 8px 14px var(--shadow); }
+  .card.takeable { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), 0 2px 4px var(--shadow); cursor: pointer; }
+  .card.takeable.selected { transform: translateY(-6px); background: var(--accent-soft); }
+  .card.dim { opacity: 0.55; }
+
+  /* ---------- Game ---------- */
+  .game { display: grid; gap: 12px; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .opponents { display: flex; gap: 8px; flex-wrap: wrap; }
+  .opp {
+    flex: 1 1 120px; min-width: 0;
+    background: var(--surface); border: 2px solid var(--line); border-radius: 14px;
+    padding: 8px 10px; display: grid; gap: 2px; position: relative;
+  }
+  .opp .name { font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .opp .meta { display: flex; gap: 10px; font-size: 0.85rem; color: var(--muted); }
+  .opp.turn { border-color: var(--accent); background: var(--accent-soft); }
+  .opp.turn::before { content: '▶'; position: absolute; right: 10px; top: 8px; color: var(--accent); font-size: 0.8rem; }
+  .opp.out { opacity: 0.5; }
+  .opp .out-badge { font-size: 0.7rem; font-weight: 800; color: var(--bad); }
+
+  .felt {
+    background: radial-gradient(ellipse at 50% 30%, var(--felt), var(--felt-deep));
+    color: var(--felt-fg);
+    border-radius: 22px;
+    padding: 16px;
+    display: grid; gap: 10px;
+    box-shadow: inset 0 0 0 4px var(--felt-deep);
+  }
+  .felt-row { display: flex; gap: 20px; align-items: flex-start; justify-content: center; flex-wrap: wrap; }
+  .pile { display: grid; gap: 6px; justify-items: center; }
+  .pile .label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; opacity: 0.85; font-weight: 700; }
+  .pile .cards { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; padding-top: 10px; }
+  .log {
+    background: var(--surface); border: 2px solid var(--line); border-radius: 14px;
+    padding: 8px 12px; min-height: 42px; display: grid; gap: 2px; font-size: 0.9rem;
+  }
+  .log .line { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .log .line .who { font-weight: 800; }
+  .log .line.old { color: var(--muted); }
+  .mini { display: inline-flex; gap: 2px; vertical-align: middle; }
+  .mini .chip {
+    display: inline-block; padding: 0 5px; border-radius: 5px; font-weight: 800; font-size: 0.8rem;
+    background: var(--card-bg); color: var(--black); border: 1px solid var(--card-line); line-height: 1.3;
+  }
+  .mini .chip.red { color: var(--red); }
+  .mini .chip.joker { color: var(--joker); }
+
+  .tray {
+    background: var(--surface); border: 2px solid var(--line); border-radius: 18px;
+    padding: 12px; display: grid; gap: 10px;
+  }
+  .tray-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .tray-head .total { font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; }
+  .tray-head .total.ok { color: var(--good); }
+  .hand {
+    display: flex; gap: 8px; padding: 14px 4px 4px;
+    overflow-x: auto; scrollbar-width: thin;
+  }
+  .actions { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+  .actions .btn-yaniv { grid-column: 1 / -1; }
+  .msg { min-height: 1.4em; font-size: 0.9rem; color: var(--bad); font-weight: 700; }
+  .msg.info { color: var(--muted); font-weight: 600; }
+  .waiting { display: flex; gap: 8px; align-items: center; color: var(--muted); font-weight: 700; }
+  .dots::after { content: '…'; animation: dots 1.2s steps(3, end) infinite; }
+  @keyframes dots { 0% { content: ''; } 33% { content: '.'; } 66% { content: '..'; } 100% { content: '...'; } }
+
+  /* ---------- Cover ---------- */
+  .cover {
+    min-height: 60vh; display: grid; place-items: center; text-align: center;
+    background: var(--felt); color: var(--felt-fg); border-radius: 22px; padding: 24px;
+  }
+  .cover .inner { display: grid; gap: 14px; justify-items: center; }
+  .cover h2 { font-size: 1.8rem; }
+  .cover button { background: var(--surface); color: var(--fg); border-color: var(--surface); font-size: 1.1rem; padding: 14px 26px; }
+
+  /* ---------- Round result ---------- */
+  .results { display: grid; gap: 10px; }
+  .res {
+    background: var(--surface); border: 2px solid var(--line); border-radius: 14px; padding: 10px 12px;
+    display: grid; gap: 8px;
+  }
+  .res-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .res-head .name { font-weight: 800; }
+  .res .cards { display: flex; gap: 5px; flex-wrap: wrap; }
+  .res .scoreline { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+  .res .added { font-weight: 800; }
+  .res .added.plus { color: var(--bad); }
+  .res .added.zero { color: var(--good); }
+  .res .cum { font-family: var(--font-display); font-size: 1.3rem; font-weight: 800; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 0.75rem; font-weight: 800; }
+  .badge.yaniv { background: var(--good-soft); color: var(--good); }
+  .badge.assaf { background: var(--joker-soft); color: var(--joker); }
+  .badge.caught { background: var(--bad-soft); color: var(--bad); }
+  .badge.out { background: var(--bad); color: var(--accent-fg); }
+  .badge.declarer { background: var(--accent-soft); color: var(--accent); }
+  .res.out { opacity: 0.6; }
+  .res.sat-out { opacity: 0.5; }
+  .headline { display: grid; gap: 4px; }
+
+  /* ---------- Game over ---------- */
+  .winner-card {
+    background: var(--accent-soft); border: 2px solid var(--accent); border-radius: 18px; padding: 18px;
+    display: grid; gap: 6px; text-align: center;
+  }
+  .winner-card .trophy { font-size: 2.4rem; }
+  .winner-card .wname { font-family: var(--font-display); font-size: 1.8rem; font-weight: 800; }
+  .final { display: grid; gap: 6px; }
+  .final .frow { display: flex; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 10px; background: var(--surface); border: 2px solid var(--line); }
+  .final .frow.win { border-color: var(--accent); }
+
+  @media (max-width: 460px) {
+    h1 { font-size: 2rem; }
+    .card { width: 50px; height: 72px; }
+    .card .big { font-size: 1.5rem; }
+    .felt-row { gap: 14px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+    .dots::after { content: '…'; }
+  }
+
+  /* ---------- Phase 2: online lobby ---------- */
+  .entries { display: grid; gap: 8px; grid-template-columns: repeat(3, 1fr); margin-bottom: 14px; }
+  .entries button { padding: 12px 8px; border-radius: 14px; display: grid; gap: 2px; justify-items: center; }
+  .entries button .ico { font-size: 1.3rem; line-height: 1; }
+  .entries button .lbl { font-size: 0.9rem; }
+  .entries button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .entries button[aria-pressed="true"] .muted { color: inherit; opacity: 0.85; }
+  .roomcode { display: grid; gap: 4px; justify-items: center; text-align: center; padding: 12px; border-radius: 14px; background: var(--surface-2); }
+  .roomcode .code { font-family: var(--font-display); font-size: 2.6rem; font-weight: 800; letter-spacing: 0.18em; line-height: 1.1; user-select: all; }
+  .share { display: flex; gap: 8px; align-items: center; }
+  .share input { flex: 1 1 auto; font-size: 0.85rem; }
+  .seat-list { display: grid; gap: 6px; }
+  .seat-row {
+    display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 12px;
+    background: var(--surface-2); min-width: 0;
+  }
+  .seat-row .no { font-family: var(--font-display); font-weight: 800; color: var(--muted); width: 1.2em; }
+  .seat-row .nm { flex: 1 1 auto; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seat-row.empty .nm { color: var(--muted); font-weight: 600; }
+  .seat-row .btn-sm { flex: 0 0 auto; }
+  .badge.on { background: var(--good-soft); color: var(--good); }
+  .badge.off { background: var(--bad-soft); color: var(--bad); }
+  .badge.cpu { background: var(--surface); color: var(--muted); border: 1px solid var(--line); }
+  .badge.host { background: var(--accent-soft); color: var(--accent); }
+  .notice {
+    background: var(--accent-soft); color: var(--fg); border: 2px solid var(--accent); border-radius: 14px;
+    padding: 10px 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; font-weight: 700;
+  }
+  .notice.bad { background: var(--bad-soft); border-color: var(--bad); }
+  .notice .grow { flex: 1 1 auto; }
+  .host-note { text-align: center; font-size: 0.78rem; color: var(--muted); margin-bottom: 8px; }
+  .online-bar {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    background: var(--surface); border: 2px dashed var(--line); border-radius: 14px; padding: 8px 12px; font-weight: 700; color: var(--muted);
+  }
+  .online-bar .grow { flex: 1 1 auto; }
+  .opp .conn { position: absolute; right: 8px; bottom: 8px; }
+  .opp.turn .conn { bottom: 6px; }
+  input.code-input { font-family: var(--font-display); font-size: 1.4rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 800; }
+  @media (max-width: 460px) {
+    .entries { grid-template-columns: 1fr; }
+    .entries button { grid-template-columns: auto 1fr; justify-items: start; text-align: left; column-gap: 10px; }
+    .entries button .ico { grid-row: 1 / span 2; }
+    .roomcode .code { font-size: 2.1rem; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===== Online notice (client: host connection lost / room closed) ===== -->
+  <div class="notice bad" id="net-notice" hidden role="status" aria-live="polite">
+    <span class="grow" id="net-notice-text"></span>
+    <button type="button" class="btn-sm" id="btn-net-lobby">ロビーへ</button>
+  </div>
+
+  <!-- ===== Lobby ===== -->
+  <section id="screen-lobby">
+    <div class="hero">
+      <h1>ヤニブ</h1>
+      <span class="tag">手札7点以下で「ヤニブ！」</span>
+    </div>
+
+    <div class="entries" id="entries" role="group" aria-label="遊び方を選ぶ">
+      <button type="button" data-entry="local" aria-pressed="true"><span class="ico" aria-hidden="true">📱</span><span class="lbl">この端末で遊ぶ</span><span class="small muted">CPU / パス＆プレイ</span></button>
+      <button type="button" data-entry="host" aria-pressed="false"><span class="ico" aria-hidden="true">🏠</span><span class="lbl">部屋を作る</span><span class="small muted">URLを共有して対戦</span></button>
+      <button type="button" data-entry="join" aria-pressed="false"><span class="ico" aria-hidden="true">🔗</span><span class="lbl">部屋に参加</span><span class="small muted">コードを入力</span></button>
+    </div>
+
+    <!-- --- Local (Phase 1) --- -->
+    <div class="panel lobby" id="panel-local">
+      <div class="row">
+        <div class="field">
+          <label for="player-count">人数（2〜5人）</label>
+          <div class="seg" id="player-count" role="group" aria-label="人数">
+            <button type="button" data-count="2">2</button>
+            <button type="button" data-count="3">3</button>
+            <button type="button" data-count="4">4</button>
+            <button type="button" data-count="5">5</button>
+          </div>
+        </div>
+      </div>
+      <div class="slots" id="slots"></div>
+      <p class="small muted" id="passplay-note" hidden>人間が2人以上なので、人間の手番ごとに「端末を渡してください」の画面が出ます。</p>
+
+      <div class="row">
+        <div class="field">
+          <label for="opt-jokers">ジョーカー</label>
+          <select id="opt-jokers">
+            <option value="0">なし</option>
+            <option value="1">1枚</option>
+            <option value="2" selected>2枚</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="opt-limit">脱落ライン</label>
+          <select id="opt-limit">
+            <option value="31">31点</option>
+            <option value="51">51点</option>
+            <option value="71">71点</option>
+            <option value="101" selected>101点</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="opt-level">CPUの強さ</label>
+          <select id="opt-level">
+            <option value="weak">弱</option>
+            <option value="normal" selected>普通</option>
+            <option value="strong">強</option>
+          </select>
+        </div>
+      </div>
+
+      <p class="msg" id="lobby-msg" aria-live="polite"></p>
+      <button type="button" class="btn-primary" id="btn-start" style="font-size:1.1rem; padding:14px;">ゲーム開始</button>
+
+      <details>
+        <summary>ルール説明</summary>
+        <ul class="rules-note">
+          <li>各5枚配り、山札の1枚を捨て札にして開始。A=1、2〜10はそのまま、J/Q/K=10、ジョーカー=0点。同じ数字が複数枚あってもその数字は1回だけ数える（3が3枚なら3点）。</li>
+          <li>手番では「ヤニブ宣言」か「捨てて1枚引く」のどちらか。ヤニブは手札合計7点以下のときだけ。</li>
+          <li>捨てられる組: 1枚 / 同じランク2枚以上 / 同じスートの連番3枚以上（ジョーカーは連番の穴埋め・端に使える。実カード2枚以上）。AとKはつながらない。</li>
+          <li>引くのは山札の一番上か、直前の人が捨てた組のカード（連番は両端のみ。端のジョーカーも可）。自分の捨て札からは取れない。</li>
+          <li>ヤニブ宣言で全員公開。宣言者と同点以下の人がいれば「ヤニブ返し」: 宣言者は手札+30点、返した人は0点。いなければ宣言者0点。他は手札合計を加算。</li>
+          <li>累計が脱落ライン以上で脱落。最後に残った1人が勝ち。前ラウンドで0点だった人が次の先手。</li>
+        </ul>
+      </details>
+    </div>
+
+    <!-- --- Host a room --- -->
+    <div class="panel lobby" id="panel-host" hidden>
+      <div id="host-setup" class="lobby">
+        <div class="field">
+          <label for="host-name">あなたの名前</label>
+          <input type="text" id="host-name" maxlength="12" placeholder="名前（12文字まで）" autocomplete="nickname">
+        </div>
+        <p class="small muted">部屋を作ると6文字のコードとURLが出ます。友だちに共有してください。参加者はログイン不要です。</p>
+        <p class="msg" id="host-msg" aria-live="polite"></p>
+        <button type="button" class="btn-primary" id="btn-host-create" style="font-size:1.1rem; padding:14px;">部屋を作る</button>
+      </div>
+
+      <div id="host-room" class="lobby" hidden>
+        <div class="roomcode">
+          <span class="eyebrow">部屋コード</span>
+          <span class="code nums" id="host-code">——————</span>
+        </div>
+        <div class="share">
+          <input type="text" id="host-url" readonly aria-label="共有URL">
+          <button type="button" class="btn-sm" id="btn-copy-url">URLをコピー</button>
+        </div>
+        <p class="small muted" id="copy-msg" aria-live="polite"></p>
+
+        <div class="row">
+          <div class="field">
+            <label for="host-seats">人数枠（2〜5）</label>
+            <div class="seg" id="host-seats" role="group" aria-label="人数枠">
+              <button type="button" data-count="2">2</button>
+              <button type="button" data-count="3">3</button>
+              <button type="button" data-count="4">4</button>
+              <button type="button" data-count="5">5</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="host-jokers">ジョーカー</label>
+            <select id="host-jokers">
+              <option value="0">なし</option>
+              <option value="1">1枚</option>
+              <option value="2" selected>2枚</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="host-limit">脱落ライン</label>
+            <select id="host-limit">
+              <option value="31">31点</option>
+              <option value="51">51点</option>
+              <option value="71">71点</option>
+              <option value="101" selected>101点</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="host-level">CPUの強さ</label>
+            <select id="host-level">
+              <option value="weak">弱</option>
+              <option value="normal" selected>普通</option>
+              <option value="strong">強</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <span class="eyebrow">参加者</span>
+          <div class="seat-list" id="host-seat-list"></div>
+          <p class="small muted" style="margin-top:6px;">空席は開始時に CPU になります。</p>
+        </div>
+
+        <p class="msg" id="host-room-msg" aria-live="polite"></p>
+        <button type="button" class="btn-primary" id="btn-host-start" style="font-size:1.1rem; padding:14px;">開始</button>
+        <button type="button" class="btn-ghost btn-sm" id="btn-host-close">部屋を閉じる</button>
+        <p class="host-note">このタブを閉じると部屋が終了します</p>
+      </div>
+    </div>
+
+    <!-- --- Join a room --- -->
+    <div class="panel lobby" id="panel-join" hidden>
+      <div id="join-setup" class="lobby">
+        <div class="row">
+          <div class="field">
+            <label for="join-code">部屋コード（6文字）</label>
+            <input type="text" id="join-code" class="code-input" maxlength="6" placeholder="ABC234" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="join-name">あなたの名前</label>
+            <input type="text" id="join-name" maxlength="12" placeholder="名前（12文字まで）" autocomplete="nickname">
+          </div>
+        </div>
+        <p class="msg" id="join-msg" aria-live="polite"></p>
+        <button type="button" class="btn-primary" id="btn-join" style="font-size:1.1rem; padding:14px;">参加</button>
+      </div>
+
+      <div id="join-room" class="lobby" hidden>
+        <div class="roomcode">
+          <span class="eyebrow">部屋コード</span>
+          <span class="code nums" id="join-room-code">——————</span>
+        </div>
+        <div>
+          <span class="eyebrow">参加者</span>
+          <div class="seat-list" id="join-seat-list"></div>
+        </div>
+        <p class="small muted" id="join-config"></p>
+        <div class="waiting"><span>ホストの開始を待っています</span><span class="dots"></span></div>
+        <button type="button" class="btn-ghost btn-sm" id="btn-join-leave">部屋を出る</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Pass & play cover ===== -->
+  <section id="screen-cover" hidden>
+    <div class="cover">
+      <div class="inner">
+        <p class="eyebrow" style="color: inherit; opacity: .85;">パス＆プレイ</p>
+        <h2 id="cover-name">○○さんの番です</h2>
+        <p>端末を渡してください。準備ができたらタップで手札を表示します。</p>
+        <button type="button" id="btn-cover">手札を見る</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Game ===== -->
+  <section id="screen-game" hidden>
+    <div class="game">
+      <div class="topbar">
+        <div>
+          <span class="eyebrow">ラウンド <span id="round-no" class="nums">1</span></span>
+          <h2 id="turn-label">あなたの番</h2>
+        </div>
+        <button type="button" class="btn-ghost btn-sm" id="btn-quit">設定に戻る</button>
+      </div>
+      <div class="online-bar" id="online-bar" hidden>
+        <span>部屋 <b class="nums" id="game-room-code">——————</b></span>
+        <span class="grow small" id="game-host-note" hidden>このタブを閉じると部屋が終了します</span>
+      </div>
+      <div class="opponents" id="opponents"></div>
+
+      <div class="felt">
+        <div class="felt-row">
+          <div class="pile">
+            <span class="label">山札</span>
+            <div class="cards">
+              <div class="card back" id="deck-card" role="img" aria-label="山札"><span class="count nums" id="deck-count">0</span></div>
+            </div>
+          </div>
+          <div class="pile">
+            <span class="label" id="discard-label">捨て札</span>
+            <div class="cards" id="discard"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="log" id="log" aria-live="polite"></div>
+
+      <div class="tray" id="tray">
+        <div class="tray-head">
+          <div>
+            <span class="eyebrow" id="hand-owner">あなたの手札</span>
+          </div>
+          <div>合計 <span class="total nums" id="hand-total">0</span></div>
+        </div>
+        <div class="hand" id="hand"></div>
+        <div class="msg" id="msg" aria-live="polite"></div>
+        <div class="actions">
+          <button type="button" id="btn-deck">捨てて山札から引く</button>
+          <button type="button" id="btn-take">捨てて捨て札から引く</button>
+          <button type="button" class="btn-yaniv" id="btn-yaniv">ヤニブ！</button>
+        </div>
+      </div>
+      <div class="waiting" id="waiting" hidden><span id="waiting-text">CPU が考え中</span><span class="dots"></span><button type="button" class="btn-sm" id="btn-replace-cpu" hidden>CPU に交代</button></div>
+    </div>
+  </section>
+
+  <!-- ===== Round result ===== -->
+  <section id="screen-round" hidden>
+    <div class="results">
+      <div class="headline">
+        <span class="eyebrow">ラウンド <span id="res-round" class="nums">1</span> 結果</span>
+        <h2 id="res-title">ヤニブ成功！</h2>
+        <p class="muted" id="res-sub"></p>
+      </div>
+      <div id="res-list" class="results"></div>
+      <button type="button" class="btn-primary" id="btn-next" style="font-size:1.05rem; padding:14px;">次のラウンド</button>
+      <div class="waiting" id="res-wait" hidden><span>ホストを待っています</span><span class="dots"></span></div>
+    </div>
+  </section>
+
+  <!-- ===== Game over ===== -->
+  <section id="screen-over" hidden>
+    <div class="results">
+      <div class="winner-card">
+        <div class="trophy" aria-hidden="true">🏆</div>
+        <span class="eyebrow">勝者</span>
+        <div class="wname" id="winner-name">—</div>
+        <p class="muted small" id="winner-sub"></p>
+      </div>
+      <h3>最終スコア</h3>
+      <div class="final" id="final-list"></div>
+      <div class="waiting" id="over-wait" hidden><span>ホストを待っています</span><span class="dots"></span></div>
+      <div class="row">
+        <button type="button" class="btn-primary" id="btn-again" style="flex:1;">もう一度（同じ設定）</button>
+        <button type="button" id="btn-lobby" style="flex:1;">設定に戻る</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="engine.js"></script>
+<script src="net.js"></script>
+<script>
+(function () {
+  'use strict';
+  var E = window.YanivEngine;
+  var N = window.YanivNet;
+  var $ = function (id) { return document.getElementById(id); };
+
+  var SUIT_CHAR = { S: '♠', H: '♥', D: '♦', C: '♣' };
+  var STORAGE_KEY = 'yaniv.settings.v1';
+  var NAME_KEY = 'yaniv.name';
+  var SEAT_KEY_PREFIX = 'yaniv.seat.';
+  var HOST_GIVEUP_MS = 30000;
+
+  // ---------- settings (local mode) ----------
+  var settings = {
+    count: 3,
+    slots: [
+      { name: 'あなた', type: 'human' },
+      { name: 'CPU 2', type: 'cpu' },
+      { name: 'CPU 3', type: 'cpu' },
+      { name: 'CPU 4', type: 'cpu' },
+      { name: 'CPU 5', type: 'cpu' }
+    ],
+    jokers: 2,
+    limit: 101,
+    cpuLevel: 'normal'
+  };
+
+  function loadSettings() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      var s = JSON.parse(raw);
+      if (s && typeof s === 'object') {
+        if (Number.isInteger(s.count) && s.count >= 2 && s.count <= 5) settings.count = s.count;
+        if (Array.isArray(s.slots)) {
+          for (var i = 0; i < 5 && i < s.slots.length; i++) {
+            if (s.slots[i] && typeof s.slots[i].name === 'string') settings.slots[i].name = s.slots[i].name.slice(0, 12);
+            if (s.slots[i] && (s.slots[i].type === 'human' || s.slots[i].type === 'cpu')) settings.slots[i].type = s.slots[i].type;
+          }
+        }
+        if ([0, 1, 2].indexOf(s.jokers) >= 0) settings.jokers = s.jokers;
+        if ([31, 51, 71, 101].indexOf(s.limit) >= 0) settings.limit = s.limit;
+        if (['weak', 'normal', 'strong'].indexOf(s.cpuLevel) >= 0) settings.cpuLevel = s.cpuLevel;
+      }
+    } catch (e) { /* ignore */ }
+  }
+  function saveSettings() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch (e) { /* ignore */ }
+  }
+  function lsGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+  function lsSet(key, val) { try { localStorage.setItem(key, val); } catch (e) { /* ignore */ } }
+  function lsDel(key) { try { localStorage.removeItem(key); } catch (e) { /* ignore */ } }
+
+  // ---------- lobby rendering (local) ----------
+  function renderLobby() {
+    var countBtns = $('player-count').querySelectorAll('button');
+    countBtns.forEach(function (b) { b.setAttribute('aria-pressed', String(+b.dataset.count === settings.count)); });
+    var slotsEl = $('slots');
+    slotsEl.innerHTML = '';
+    var humans = 0;
+    for (var i = 0; i < settings.count; i++) {
+      var slot = settings.slots[i];
+      if (slot.type === 'human') humans++;
+      var row = document.createElement('div');
+      row.className = 'slot';
+      var seg = document.createElement('div');
+      seg.className = 'seg';
+      ['human', 'cpu'].forEach(function (t) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = t === 'human' ? '人間' : 'CPU';
+        b.setAttribute('aria-pressed', String(slot.type === t));
+        b.addEventListener('click', (function (idx, type) {
+          return function () {
+            settings.slots[idx].type = type;
+            var nm = settings.slots[idx].name;
+            if (type === 'cpu' && (nm === 'あなた' || /^プレイヤー\s?\d$/.test(nm))) settings.slots[idx].name = 'CPU ' + (idx + 1);
+            if (type === 'human' && /^CPU\s?\d$/.test(nm)) settings.slots[idx].name = idx === 0 ? 'あなた' : 'プレイヤー ' + (idx + 1);
+            saveSettings(); renderLobby();
+          };
+        })(i, t));
+        seg.appendChild(b);
+      });
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.id = 'slot-name-' + i;
+      input.maxLength = 12;
+      input.value = slot.name;
+      input.placeholder = '名前';
+      input.setAttribute('aria-label', 'プレイヤー' + (i + 1) + 'の名前');
+      input.addEventListener('input', (function (idx) {
+        return function (ev) { settings.slots[idx].name = ev.target.value; saveSettings(); };
+      })(i));
+      row.appendChild(seg);
+      row.appendChild(input);
+      slotsEl.appendChild(row);
+    }
+    $('passplay-note').hidden = humans < 2;
+    $('opt-jokers').value = String(settings.jokers);
+    $('opt-limit').value = String(settings.limit);
+    $('opt-level').value = settings.cpuLevel;
+  }
+
+  $('player-count').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button');
+    if (!b) return;
+    settings.count = +b.dataset.count;
+    saveSettings(); renderLobby();
+  });
+  $('opt-jokers').addEventListener('change', function (ev) { settings.jokers = +ev.target.value; saveSettings(); });
+  $('opt-limit').addEventListener('change', function (ev) { settings.limit = +ev.target.value; saveSettings(); });
+  $('opt-level').addEventListener('change', function (ev) { settings.cpuLevel = ev.target.value; saveSettings(); });
+
+  // ---------- screens ----------
+  var SCREENS = ['screen-lobby', 'screen-cover', 'screen-game', 'screen-round', 'screen-over'];
+  function show(id) {
+    SCREENS.forEach(function (s) { $(s).hidden = s !== id; });
+    try { window.scrollTo({ top: 0, behavior: 'instant' }); } catch (e) { /* ignore */ }
+  }
+  function showIfHidden(id) { if ($(id).hidden) show(id); }
+
+  // ---------- mode: 'local' | 'host' | 'client' ----------
+  var mode = 'local';
+  var host = null;          // YanivNet host (mode === 'host')
+  var client = null;        // YanivNet client (mode === 'client')
+  var view = null;          // latest view (online modes)
+  var sending = false;      // a move is in flight (online)
+  var lastMoveNo = -1;      // for log lines from views
+  var lastRoundLogged = 0;
+  var disconnectedSince = null;
+  var giveUpTimer = null;
+  var lastLobby = null;     // latest lobby snapshot (online)
+
+  // ---------- game state (local mode) ----------
+  var game = null;          // engine state
+  var rng = null;
+  var config = null;
+  var selected = {};        // hand card ids selected
+  var takeSel = null;       // selected discard card id
+  var logLines = [];        // {html, old}
+  var cpuTimer = null;
+  var shownHuman = -1;      // index of human whose hand is currently revealed (pass & play)
+  var viewer = -1;          // whose hand the tray shows
+
+  function humanCount() {
+    return game.players.filter(function (p) { return p.type === 'human' && !p.eliminated; }).length;
+  }
+
+  function newGame(cfg) {
+    config = cfg;
+    rng = E.createRng((Math.random() * 0xffffffff) >>> 0);
+    game = E.createGame(cfg, rng);
+    logLines = [];
+    beginRound();
+  }
+
+  function beginRound() {
+    game = E.startRound(game, rng);
+    selected = {}; takeSel = null; shownHuman = -1;
+    logLines = [];
+    pushLog('<span class="who">ラウンド ' + game.round + '</span> 開始。先手は <span class="who">' + esc(game.players[game.currentPlayer].name) + '</span>。');
+    show('screen-game');
+    step();
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  /** Coerce anything meant to be a number before it goes into innerHTML. */
+  function num(x) { return Number(x) | 0; }
+
+  function pushLog(html) {
+    logLines.forEach(function (l) { l.old = true; });
+    logLines.push({ html: html, old: false });
+    if (logLines.length > 4) logLines.shift();
+  }
+
+  /** Advance the local game until a human needs to act. */
+  function step() {
+    if (cpuTimer) { clearTimeout(cpuTimer); cpuTimer = null; }
+    if (game.phase === 'roundEnd') { renderRoundEnd(buildLocalView()); return; }
+    if (game.phase === 'gameOver') { renderGameOver(buildLocalView()); return; }
+    var p = game.players[game.currentPlayer];
+    if (p.type === 'cpu') {
+      viewer = pickViewer();
+      render();
+      var delay = 600 + Math.floor(Math.random() * 300);
+      cpuTimer = setTimeout(cpuTurn, delay);
+      return;
+    }
+    // human
+    if (humanCount() >= 2 && shownHuman !== game.currentPlayer) {
+      $('cover-name').textContent = p.name + 'さんの番です';
+      show('screen-cover');
+      return;
+    }
+    viewer = game.currentPlayer;
+    render();
+  }
+
+  /** Whose hand to show in the tray while a CPU is thinking (local). */
+  function pickViewer() {
+    if (humanCount() >= 2) return shownHuman >= 0 && !game.players[shownHuman].eliminated ? shownHuman : -1;
+    for (var i = 0; i < game.players.length; i++) {
+      if (game.players[i].type === 'human' && !game.players[i].eliminated) return i;
+    }
+    return -1;
+  }
+
+  function cpuTurn() {
+    cpuTimer = null;
+    if (game.phase !== 'playing') { step(); return; }
+    var pi = game.currentPlayer;
+    var move;
+    try {
+      move = E.chooseMove(game, pi, config.cpuLevel, rng);
+      var before = game;
+      game = E.applyMove(game, move, rng);
+      logMove(before, pi, move);
+    } catch (err) {
+      pushLog('<span class="who">エラー</span> ' + esc(err && err.message));
+      render();
+      return;
+    }
+    step();
+  }
+
+  function logMove(before, pi, move) {
+    var name = '<span class="who">' + esc(before.players[pi].name) + '</span>';
+    if (move.type === 'yaniv') {
+      pushLog(name + ' が <b>ヤニブ宣言！</b>');
+      return;
+    }
+    var hand = before.players[pi].hand;
+    var discarded = move.discard.map(function (id) { return hand.filter(function (c) { return c.id === id; })[0]; });
+    var g = E.analyzeGroup(discarded);
+    var cardsHtml = miniCards(g ? g.cards : discarded);
+    var drawText;
+    if (move.draw === 'deck') drawText = '山札から引いた';
+    else {
+      var top = before.discardPile[before.discardPile.length - 1];
+      var taken = top.cards.filter(function (c) { return c.id === move.draw; })[0];
+      drawText = '捨て札から ' + miniCards([taken]) + ' を取った';
+    }
+    pushLog(name + ' は ' + cardsHtml + ' を捨てて、' + drawText + '。');
+  }
+
+  /** Online: derive a log line from view.lastMove (host-authoritative). */
+  function logFromView(V) {
+    if (V.phase !== 'playing') return;
+    if (V.round !== lastRoundLogged) {
+      lastRoundLogged = V.round;
+      logLines = [];
+      var starter = V.lastMove ? null : V.players[V.currentPlayer];
+      pushLog('<span class="who">ラウンド ' + num(V.round) + '</span> 開始。' + (starter ? '先手は <span class="who">' + esc(starter.name) + '</span>。' : ''));
+    }
+    if (!V.lastMove || V.moveNo === lastMoveNo) return;
+    lastMoveNo = V.moveNo;
+    var lm = V.lastMove;
+    var p = V.players[lm.playerIndex];
+    if (!p || !Array.isArray(lm.discard)) return;
+    var name = '<span class="who">' + esc(p.name) + '</span>';
+    var drawText = lm.drawSource === 'discard' && lm.drawnCard
+      ? '捨て札から ' + miniCards([lm.drawnCard]) + ' を取った'
+      : '山札から引いた';
+    pushLog(name + ' は ' + miniCards(lm.discard) + ' を捨てて、' + drawText + '。');
+  }
+
+  function miniCards(cards) {
+    return '<span class="mini">' + cards.map(function (c) {
+      var cls = 'chip' + (c.rank === 'JOKER' ? ' joker' : (c.suit === 'H' || c.suit === 'D') ? ' red' : '');
+      var label = c.rank === 'JOKER' ? 'JOKER' : esc(c.rank) + (SUIT_CHAR[c.suit] || '');
+      return '<span class="' + cls + '">' + label + '</span>';
+    }).join('') + '</span>';
+  }
+
+  // ---------- view normalization ----------
+  /** Local mode: build the same shape that the host sends online, for the current viewer. */
+  function buildLocalView() {
+    return {
+      seat: viewer,
+      moveNo: 0,
+      phase: game.phase,
+      round: game.round,
+      currentPlayer: game.currentPlayer,
+      config: game.config,
+      players: game.players.map(function (p, i) {
+        var q = { name: p.name, type: p.type, score: p.score, eliminated: p.eliminated, handCount: p.hand.length };
+        if (i === viewer) q.hand = p.hand;
+        return q;
+      }),
+      deckCount: game.deck.length,
+      discardPile: game.discardPile.length ? [game.discardPile[game.discardPile.length - 1]] : [],
+      takeable: [],
+      legalMoves: [],
+      roundResult: game.roundResult,
+      lastMove: game.lastMove,
+      winner: game.winner,
+      seats: null
+    };
+  }
+
+  function currentView() {
+    if (mode === 'local') return game ? buildLocalView() : null;
+    return view;
+  }
+
+  function isMyTurn(V) {
+    if (!V || V.phase !== 'playing') return false;
+    if (mode === 'local') {
+      var curP = game.players[game.currentPlayer];
+      return curP.type === 'human' && viewer === game.currentPlayer;
+    }
+    return V.currentPlayer === V.seat && !sending;
+  }
+
+  function takeableFor(V, myTurn) {
+    if (!myTurn) return [];
+    if (mode === 'local') return E.takeableFromDiscard(game);
+    return Array.isArray(V.takeable) ? V.takeable : [];
+  }
+
+  // ---------- rendering ----------
+  function cardEl(c, opts) {
+    opts = opts || {};
+    var el = document.createElement('div');
+    var isJ = c.rank === 'JOKER';
+    var red = c.suit === 'H' || c.suit === 'D';
+    el.className = 'card' + (isJ ? ' joker' : red ? ' red' : '') + (opts.small ? ' sm' : '');
+    el.dataset.id = c.id;
+    var corner = document.createElement('span');
+    corner.className = 'corner';
+    var big = document.createElement('span');
+    big.className = 'big';
+    if (isJ) {
+      corner.textContent = '★';
+      big.textContent = 'JOKER';
+    } else {
+      corner.innerHTML = esc(c.rank) + '<small>' + (SUIT_CHAR[c.suit] || '') + '</small>';
+      big.textContent = SUIT_CHAR[c.suit] || '';
+    }
+    el.appendChild(corner);
+    el.appendChild(big);
+    el.setAttribute('role', 'img');
+    el.setAttribute('aria-label', isJ ? 'ジョーカー' : c.rank + ' ' + (SUIT_CHAR[c.suit] || ''));
+    return el;
+  }
+
+  function render() {
+    var V = currentView();
+    if (!V || V.phase !== 'playing') return;
+    var cur = V.currentPlayer;
+    var curP = V.players[cur];
+    var myTurn = isMyTurn(V);
+    var online = mode !== 'local';
+    var me = V.seat;
+
+    $('round-no').textContent = num(V.round);
+    if (online) {
+      $('turn-label').textContent = cur === me ? (sending ? '送信中' : 'あなたの番') : curP.name + 'の番';
+    } else {
+      $('turn-label').textContent = myTurn
+        ? (humanCount() >= 2 ? curP.name + 'の番' : 'あなたの番')
+        : curP.name + 'の番';
+    }
+
+    // online bar
+    $('online-bar').hidden = !online;
+    if (online) {
+      $('game-room-code').textContent = (mode === 'host' ? host.roomCode : client.roomCode) || '';
+      $('game-host-note').hidden = mode !== 'host';
+    }
+    $('btn-quit').textContent = mode === 'host' ? '部屋を閉じる' : mode === 'client' ? '部屋を出る' : '設定に戻る';
+
+    // opponents (everyone except the viewer)
+    var opps = $('opponents');
+    opps.innerHTML = '';
+    V.players.forEach(function (p, i) {
+      if (i === me) return;
+      var d = document.createElement('div');
+      d.className = 'opp' + (i === cur ? ' turn' : '') + (p.eliminated ? ' out' : '');
+      var connHtml = '';
+      if (online && V.seats && V.seats[i] && p.type === 'human' && !V.seats[i].isHost) {
+        connHtml = V.seats[i].connected
+          ? '<span class="badge on conn">接続中</span>'
+          : '<span class="badge off conn">切断中</span>';
+      }
+      d.innerHTML =
+        '<div class="name">' + esc(p.name) + (p.type === 'cpu' ? ' <span class="muted small">CPU</span>' : '') + '</div>' +
+        '<div class="meta nums"><span>手札 ' + (p.eliminated ? '—' : num(p.handCount) + '枚') + '</span><span>累計 ' + num(p.score) + '</span></div>' +
+        (p.eliminated ? '<span class="out-badge">脱落</span>' : '') + connHtml;
+      opps.appendChild(d);
+    });
+
+    // deck + discard
+    $('deck-count').textContent = num(V.deckCount);
+    var top = V.discardPile.length ? V.discardPile[V.discardPile.length - 1] : null;
+    var takeable = takeableFor(V, myTurn);
+    var takeIds = {};
+    takeable.forEach(function (c) { takeIds[c.id] = true; });
+    var disc = $('discard');
+    disc.innerHTML = '';
+    if (top && Array.isArray(top.cards)) {
+      top.cards.forEach(function (c) {
+        var el = cardEl(c);
+        if (takeIds[c.id]) {
+          el.classList.add('takeable');
+          el.tabIndex = 0;
+          if (takeSel === c.id) el.classList.add('selected');
+          el.addEventListener('click', function () { toggleTake(c.id); });
+          el.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleTake(c.id); } });
+        } else if (myTurn && top.cards.length > 1) {
+          el.classList.add('dim');
+        }
+        disc.appendChild(el);
+      });
+      var byP = top.by == null ? null : V.players[top.by];
+      $('discard-label').innerHTML = '捨て札 ' + (byP ? '（' + esc(byP.name) + ' が捨てた）' : '');
+    } else {
+      $('discard-label').textContent = '捨て札';
+    }
+
+    // log
+    var log = $('log');
+    log.innerHTML = logLines.map(function (l) { return '<div class="line' + (l.old ? ' old' : '') + '">' + l.html + '</div>'; }).join('');
+
+    // tray
+    var tray = $('tray');
+    if (me < 0 || !V.players[me] || !Array.isArray(V.players[me].hand)) {
+      tray.hidden = true;
+    } else {
+      tray.hidden = false;
+      var vp = V.players[me];
+      $('hand-owner').textContent = (!online && humanCount() >= 2 ? vp.name + 'の手札' : 'あなたの手札');
+      var total = E.handValue(vp.hand);
+      var totalEl = $('hand-total');
+      totalEl.textContent = total;
+      totalEl.classList.toggle('ok', total <= E.YANIV_MAX);
+      var handEl = $('hand');
+      handEl.innerHTML = '';
+      vp.hand.forEach(function (c) {
+        var el = cardEl(c);
+        if (myTurn) {
+          el.classList.add('selectable');
+          el.tabIndex = 0;
+          if (selected[c.id]) el.classList.add('selected');
+          el.addEventListener('click', function () { toggleSelect(c.id); });
+          el.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleSelect(c.id); } });
+        }
+        handEl.appendChild(el);
+      });
+      updateButtons(myTurn, vp, takeable);
+    }
+
+    // waiting indicator
+    var waiting = $('waiting');
+    var replaceBtn = $('btn-replace-cpu');
+    replaceBtn.hidden = true;
+    if (!online) {
+      waiting.hidden = myTurn || curP.type !== 'cpu';
+      $('waiting-text').textContent = curP.name + ' が考え中';
+    } else if (cur === me) {
+      waiting.hidden = !sending;
+      $('waiting-text').textContent = '送信中';
+    } else {
+      waiting.hidden = false;
+      var seatInfo = V.seats && V.seats[cur];
+      if (curP.type === 'cpu') {
+        $('waiting-text').textContent = curP.name + ' が考え中';
+      } else if (seatInfo && !seatInfo.isHost && !seatInfo.connected) {
+        $('waiting-text').textContent = curP.name + ' の再接続待ち';
+        if (mode === 'host') { replaceBtn.hidden = false; replaceBtn.dataset.seat = String(cur); }
+      } else {
+        $('waiting-text').textContent = curP.name + ' の手番';
+      }
+    }
+  }
+
+  function myHand() {
+    var V = currentView();
+    if (!V || V.seat < 0 || !V.players[V.seat]) return [];
+    return V.players[V.seat].hand || [];
+  }
+
+  function selectedCards() {
+    return myHand().filter(function (c) { return selected[c.id]; });
+  }
+
+  function updateButtons(myTurn, vp, takeable) {
+    var btnDeck = $('btn-deck'), btnTake = $('btn-take'), btnYaniv = $('btn-yaniv'), msg = $('msg');
+    if (!myTurn) {
+      btnDeck.disabled = btnTake.disabled = btnYaniv.disabled = true;
+      if (!(mode !== 'local' && msg.className === 'msg' && msg.textContent)) {
+        msg.className = 'msg info';
+        msg.textContent = sending ? '送信中…' : '';
+      }
+      return;
+    }
+    var cards = selectedCards();
+    var err = E.discardError(cards);
+    var validSel = cards.length > 0 && !err;
+    btnDeck.disabled = !validSel;
+    btnTake.disabled = !(validSel && takeSel);
+    btnYaniv.disabled = E.handValue(vp.hand) > E.YANIV_MAX;
+    if (cards.length > 0 && err) {
+      msg.className = 'msg';
+      msg.textContent = err;
+    } else if (cards.length === 0) {
+      msg.className = 'msg info';
+      msg.textContent = takeable.length
+        ? '捨てるカードを選んでください。光っている捨て札はタップで取れます。'
+        : '捨てるカードを選んでください。';
+    } else {
+      msg.className = 'msg info';
+      var g = E.analyzeGroup(cards);
+      var kind = g.kind === 'single' ? '1枚' : g.kind === 'set' ? '同ランク ' + cards.length + '枚' : '連番 ' + cards.length + '枚';
+      var selIds = {};
+      cards.forEach(function (c) { selIds[c.id] = true; });
+      var rest = vp.hand.filter(function (c) { return !selIds[c.id]; });
+      msg.textContent = kind + 'を捨てます（残り ' + E.handValue(rest) + '点）。' + (takeSel ? '捨て札から取ります。' : '');
+    }
+  }
+
+  function toggleSelect(id) {
+    if (selected[id]) delete selected[id]; else selected[id] = true;
+    render();
+  }
+  function toggleTake(id) {
+    takeSel = takeSel === id ? null : id;
+    render();
+  }
+
+  function flash(text) {
+    var msg = $('msg');
+    msg.className = 'msg';
+    msg.textContent = text;
+  }
+
+  // ---------- submitting moves ----------
+  function submitMove(move) {
+    if (mode === 'local') {
+      try {
+        var before = game;
+        game = E.applyMove(game, move, rng);
+        logMove(before, before.currentPlayer, move);
+      } catch (e) {
+        flash(move.type === 'yaniv' ? '手札合計が7点以下のときだけ宣言できます' : (e && e.message ? e.message : '不正な手です'));
+        return;
+      }
+      selected = {}; takeSel = null;
+      step();
+      return;
+    }
+    if (sending) return;
+    if (mode === 'host') {
+      var r = host.submitMove(move);
+      if (!r.ok) { flash(r.message || '不正な手です'); return; }
+      selected = {}; takeSel = null;
+      render();
+      return;
+    }
+    if (mode === 'client') {
+      sending = true;
+      render();
+      if (!client.submitMove(move)) { sending = false; flash('ホストに接続していません'); render(); }
+    }
+  }
+
+  function humanPlay(draw) {
+    var cards = selectedCards();
+    var err = E.discardError(cards);
+    if (err) { flash(err); return; }
+    submitMove({ type: 'play', discard: cards.map(function (c) { return c.id; }), draw: draw });
+  }
+
+  $('btn-deck').addEventListener('click', function () { humanPlay('deck'); });
+  $('btn-take').addEventListener('click', function () {
+    if (!takeSel) { flash('取る捨て札をタップして選んでください'); return; }
+    humanPlay(takeSel);
+  });
+  $('btn-yaniv').addEventListener('click', function () {
+    if (E.handValue(myHand()) > E.YANIV_MAX) { flash('手札合計が7点以下のときだけ宣言できます'); return; }
+    submitMove({ type: 'yaniv' });
+  });
+  $('btn-quit').addEventListener('click', function () {
+    if (cpuTimer) { clearTimeout(cpuTimer); cpuTimer = null; }
+    if (mode !== 'local') { leaveOnline(); return; }
+    game = null;
+    show('screen-lobby');
+  });
+  $('btn-cover').addEventListener('click', function () {
+    shownHuman = game.currentPlayer;
+    step();
+  });
+  $('btn-replace-cpu').addEventListener('click', function () {
+    if (mode !== 'host' || !host) return;
+    var seat = parseInt(this.dataset.seat, 10);
+    try { host.replaceWithCpu(seat); } catch (e) { flash(e && e.message ? e.message : 'エラー'); }
+  });
+
+  // ---------- round end ----------
+  function renderRoundEnd(V) {
+    var r = V.roundResult;
+    if (!r || !Array.isArray(r.entries)) return;
+    $('res-round').textContent = num(r.round);
+    var declarer = V.players[r.declarer] || { name: '?' };
+    if (r.assaf != null) {
+      $('res-title').textContent = 'ヤニブ返し！';
+      $('res-sub').textContent = declarer.name + ' の宣言（' + num(r.declarerValue) + '点）に ' + (V.players[r.assaf] || { name: '?' }).name + ' が同点以下で返しました。宣言者は +30点。';
+    } else {
+      $('res-title').textContent = 'ヤニブ成功！';
+      $('res-sub').textContent = declarer.name + ' が ' + num(r.declarerValue) + '点で宣言。誰も下回れませんでした。';
+    }
+    var list = $('res-list');
+    list.innerHTML = '';
+    r.entries.forEach(function (en) {
+      var d = document.createElement('div');
+      d.className = 'res' + (en.newlyEliminated ? ' out' : '') + (!en.wasActive ? ' sat-out' : '');
+      var head = document.createElement('div');
+      head.className = 'res-head';
+      var badges = '';
+      if (en.role === 'yaniv') badges += '<span class="badge yaniv">ヤニブ成功</span>';
+      if (en.role === 'caught') badges += '<span class="badge caught">ヤニブ返しされた</span>';
+      if (en.role === 'assaf') badges += '<span class="badge assaf">ヤニブ返し</span>';
+      if (en.newlyEliminated) badges += '<span class="badge out">脱落</span>';
+      if (!en.wasActive) badges += '<span class="badge out">脱落済</span>';
+      head.innerHTML = '<span class="name">' + esc(en.name) + '</span><span class="row" style="gap:6px;">' + badges + '</span>';
+      d.appendChild(head);
+      if (en.wasActive && Array.isArray(en.hand)) {
+        var cards = document.createElement('div');
+        cards.className = 'cards';
+        en.hand.forEach(function (c) { cards.appendChild(cardEl(c, { small: true })); });
+        d.appendChild(cards);
+      }
+      var sl = document.createElement('div');
+      sl.className = 'scoreline';
+      var addedCls = en.added > 0 ? 'plus' : 'zero';
+      sl.innerHTML =
+        (en.wasActive ? '<span class="muted small">手札 ' + num(en.value) + '点</span>' : '') +
+        (en.wasActive ? '<span class="added ' + addedCls + '">+' + num(en.added) + (en.role === 'caught' ? ' <span class="muted small">(' + num(en.value) + '+30)</span>' : '') + '</span>' : '') +
+        '<span>累計 <span class="cum">' + num(en.total) + '</span> <span class="muted small">/ ' + num(V.config.limit) + '</span></span>';
+      d.appendChild(sl);
+      list.appendChild(d);
+    });
+    $('btn-next').hidden = mode === 'client';
+    $('res-wait').hidden = mode !== 'client';
+    show('screen-round');
+  }
+  $('btn-next').addEventListener('click', function () {
+    if (mode === 'local') { if (game && game.phase === 'roundEnd') beginRound(); return; }
+    if (mode === 'host') { try { host.nextRound(); } catch (e) { /* not at round end */ } }
+  });
+
+  // ---------- game over ----------
+  function renderGameOver(V) {
+    var w = V.winner;
+    var wp = V.players[w] || { name: '—' };
+    $('winner-name').textContent = wp.name;
+    $('winner-sub').textContent = num(V.round) + ' ラウンドで決着。脱落ライン ' + num(V.config.limit) + '点。';
+    var list = $('final-list');
+    list.innerHTML = '';
+    var order = V.players.map(function (p, i) { return i; }).sort(function (a, b) {
+      if (a === w) return -1; if (b === w) return 1;
+      return V.players[a].score - V.players[b].score;
+    });
+    order.forEach(function (i) {
+      var p = V.players[i];
+      var d = document.createElement('div');
+      d.className = 'frow nums' + (i === w ? ' win' : '');
+      d.innerHTML = '<span><b>' + esc(p.name) + '</b>' + (i === w ? ' <span class="badge declarer">勝者</span>' : ' <span class="badge out">脱落</span>') + '</span><span><b>' + num(p.score) + '</b> 点</span>';
+      list.appendChild(d);
+    });
+    $('btn-again').hidden = mode === 'client';
+    $('over-wait').hidden = mode !== 'client';
+    $('btn-lobby').textContent = mode === 'client' ? '部屋を出る' : mode === 'host' ? '部屋のロビーへ' : '設定に戻る';
+    show('screen-over');
+  }
+  $('btn-again').addEventListener('click', function () {
+    if (mode === 'local') { newGame(config); return; }
+    if (mode === 'host') { try { host.restart(); } catch (e) { /* ignore */ } }
+  });
+  $('btn-lobby').addEventListener('click', function () {
+    if (mode === 'local') { game = null; show('screen-lobby'); return; }
+    if (mode === 'host') { host.backToLobby(); return; }
+    leaveOnline();
+  });
+
+  // ---------- local start ----------
+  $('btn-start').addEventListener('click', function () {
+    var humans = 0;
+    for (var h = 0; h < settings.count; h++) if (settings.slots[h].type === 'human') humans++;
+    if (humans < 1) { $('lobby-msg').textContent = '人間を1人以上入れてください'; return; }
+    $('lobby-msg').textContent = '';
+    var players = [];
+    for (var i = 0; i < settings.count; i++) {
+      var s = settings.slots[i];
+      players.push({ name: s.name.trim() || (s.type === 'cpu' ? 'CPU ' + (i + 1) : 'プレイヤー ' + (i + 1)), type: s.type });
+    }
+    saveSettings();
+    mode = 'local';
+    newGame({ players: players, jokers: settings.jokers, limit: settings.limit, cpuLevel: settings.cpuLevel });
+  });
+
+  // =====================================================================
+  // Online (Phase 2)
+  // =====================================================================
+  var ENTRIES = ['local', 'host', 'join'];
+  var entry = 'local';
+
+  function setEntry(name) {
+    entry = name;
+    $('entries').querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.entry === name)); });
+    ENTRIES.forEach(function (e) { $('panel-' + e).hidden = e !== name; });
+  }
+  $('entries').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button');
+    if (!b) return;
+    if (host || client) return; // while in a room, keep the room panel
+    setEntry(b.dataset.entry);
+  });
+
+  function peerAvailable() { return typeof window.Peer !== 'undefined' && !!N; }
+
+  function shareUrl(code) {
+    return location.origin + location.pathname + '?room=' + code;
+  }
+
+  function reasonText(reason) {
+    switch (reason) {
+      case 'full': return '満席のため参加できません';
+      case 'in-progress': return 'ゲーム中のため参加できません';
+      case 'name': return '名前を入力してください';
+      case 'proto': return 'バージョンが違います。ページを再読み込みしてください';
+      case 'kicked': return 'ホストにより退出させられました';
+      case 'replaced': return '別のタブで参加しました（この画面は切断されました）';
+      case 'cpu': return 'ホストがあなたの席を CPU に交代しました';
+      case 'host-left': return 'ホストが部屋を閉じました';
+      case 'bad-code': return '部屋コードは6文字です';
+      default: return '部屋に接続できませんでした（コードを確認してください）';
+    }
+  }
+
+  function showNetNotice(text, bad) {
+    var n = $('net-notice');
+    n.hidden = false;
+    n.className = 'notice' + (bad ? ' bad' : '');
+    $('net-notice-text').textContent = text;
+  }
+  function hideNetNotice() { $('net-notice').hidden = true; }
+  $('btn-net-lobby').addEventListener('click', function () { leaveOnline(); });
+
+  function resetOnlineUi() {
+    view = null; sending = false; lastMoveNo = -1; lastRoundLogged = 0; lastLobby = null;
+    selected = {}; takeSel = null; logLines = [];
+    disconnectedSince = null;
+    if (giveUpTimer) { clearTimeout(giveUpTimer); giveUpTimer = null; }
+    hideNetNotice();
+    $('online-bar').hidden = true;
+    $('btn-next').hidden = false; $('res-wait').hidden = true;
+    $('btn-again').hidden = false; $('over-wait').hidden = true;
+    $('btn-replace-cpu').hidden = true;
+    $('btn-quit').textContent = '設定に戻る';
+    $('btn-lobby').textContent = '設定に戻る';
+  }
+
+  /** Leave whatever room we are in and go back to the lobby. */
+  function leaveOnline() {
+    if (host) { try { host.close('host-left'); } catch (e) { /* ignore */ } host = null; }
+    if (client) { try { client.leave(); } catch (e) { /* ignore */ } client = null; }
+    mode = 'local';
+    game = null;
+    resetOnlineUi();
+    $('host-room').hidden = true; $('host-setup').hidden = false;
+    $('join-room').hidden = true; $('join-setup').hidden = false;
+    $('host-msg').textContent = ''; $('join-msg').textContent = ''; $('host-room-msg').textContent = '';
+    show('screen-lobby');
+  }
+
+  /** Apply the latest view (host or client): pick a screen and render. */
+  function applyView() {
+    var V = view;
+    if (!V) return;
+    if (V.phase === 'playing') {
+      logFromView(V);
+      showIfHidden('screen-game');
+      render();
+    } else if (V.phase === 'roundEnd') {
+      renderRoundEnd(V);
+    } else if (V.phase === 'gameOver') {
+      renderGameOver(V);
+    }
+  }
+
+  function renderSeatList(el, lobby, hostUi) {
+    el.innerHTML = '';
+    lobby.seats.forEach(function (s, i) {
+      var row = document.createElement('div');
+      row.className = 'seat-row' + (s.type === 'empty' ? ' empty' : '');
+      var badges = '';
+      if (s.type === 'human' && s.isHost) badges += '<span class="badge host">ホスト</span>';
+      if (s.type === 'human' && !s.isHost) badges += s.connected ? '<span class="badge on">接続中</span>' : '<span class="badge off">切断中</span>';
+      if (s.type === 'cpu') badges += '<span class="badge cpu">CPU</span>';
+      row.innerHTML = '<span class="no nums">' + num(i + 1) + '</span><span class="nm">' + (s.type === 'empty' ? '空席' : esc(s.name)) + '</span>' + badges;
+      if (hostUi && s.type === 'human' && !s.isHost) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn-sm btn-ghost';
+        b.textContent = '退出';
+        b.addEventListener('click', function () { try { host.kick(i); } catch (e) { /* ignore */ } });
+        row.appendChild(b);
+      }
+      el.appendChild(row);
+    });
+  }
+
+  function configText(cfg) {
+    var lv = { weak: '弱', normal: '普通', strong: '強' }[cfg.cpuLevel] || cfg.cpuLevel;
+    return '人数枠 ' + cfg.seatCount + '・ジョーカー ' + (cfg.jokers ? cfg.jokers + '枚' : 'なし') + '・脱落ライン ' + cfg.limit + '点・CPU ' + lv;
+  }
+
+  // ---------- host ----------
+  function renderHostLobby(lobby) {
+    lastLobby = lobby;
+    $('host-seats').querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(+b.dataset.count === lobby.config.seatCount)); });
+    $('host-jokers').value = String(lobby.config.jokers);
+    $('host-limit').value = String(lobby.config.limit);
+    $('host-level').value = lobby.config.cpuLevel;
+    renderSeatList($('host-seat-list'), lobby, !lobby.inGame);
+    var humans = lobby.seats.filter(function (s) { return s.type === 'human'; }).length;
+    $('btn-host-start').disabled = lobby.inGame || humans < 1;
+  }
+
+  $('btn-host-create').addEventListener('click', function () {
+    var name = $('host-name').value.trim().slice(0, 12);
+    if (!name) { $('host-msg').textContent = '名前を入力してください'; return; }
+    if (!peerAvailable()) { $('host-msg').textContent = '通信ライブラリ（PeerJS）を読み込めませんでした。ネットワークを確認して再読み込みしてください。'; return; }
+    lsSet(NAME_KEY, name);
+    $('host-msg').textContent = '部屋を作成中…';
+    $('btn-host-create').disabled = true;
+    var h = N.createHost({ transport: N.createPeerTransport({ peerOptions: { debug: 0 } }), engine: E, hostName: name });
+    h.onLobbyChange(function (l) { if (host === h) renderHostLobby(l); });
+    h.onStateChange(function (state) {
+      if (host !== h) return;
+      if (!state) {
+        view = null; lastMoveNo = -1; lastRoundLogged = 0;
+        $('host-room-msg').textContent = '';
+        show('screen-lobby');
+        return;
+      }
+      view = h.view();
+      applyView();
+    });
+    h.onError(function (e) { if (host === h) { pushLog('<span class="who">エラー</span> ' + esc(e.message || '')); render(); } });
+    h.open().then(function (code) {
+      if (host !== null) { h.close(); return; }
+      host = h;
+      mode = 'host';
+      resetOnlineUi();
+      $('btn-host-create').disabled = false;
+      $('host-msg').textContent = '';
+      $('host-code').textContent = code;
+      $('host-url').value = shareUrl(code);
+      $('copy-msg').textContent = '';
+      $('host-setup').hidden = true;
+      $('host-room').hidden = false;
+      renderHostLobby(h.lobby());
+    }, function (err) {
+      $('btn-host-create').disabled = false;
+      $('host-msg').textContent = '部屋を作れませんでした: ' + (err && err.message ? err.message : '接続エラー');
+      try { h.close(); } catch (e) { /* ignore */ }
+    });
+  });
+
+  $('btn-copy-url').addEventListener('click', function () {
+    var input = $('host-url');
+    var done = function () { $('copy-msg').textContent = 'URLをコピーしました'; };
+    var fallback = function () {
+      try { input.focus(); input.select(); input.setSelectionRange(0, input.value.length); } catch (e) { /* ignore */ }
+      $('copy-msg').textContent = '選択しました。長押し/Ctrl+C でコピーしてください';
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(input.value).then(done, fallback);
+    } else fallback();
+  });
+  $('host-url').addEventListener('focus', function () { try { this.select(); } catch (e) { /* ignore */ } });
+
+  function hostSetConfig(patch) {
+    if (!host) return;
+    try { host.setConfig(patch); $('host-room-msg').textContent = ''; }
+    catch (e) { $('host-room-msg').textContent = e && e.message ? e.message : '設定を変更できません'; renderHostLobby(host.lobby()); }
+  }
+  $('host-seats').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button');
+    if (!b) return;
+    hostSetConfig({ seatCount: +b.dataset.count });
+  });
+  $('host-jokers').addEventListener('change', function (ev) { hostSetConfig({ jokers: +ev.target.value }); });
+  $('host-limit').addEventListener('change', function (ev) { hostSetConfig({ limit: +ev.target.value }); });
+  $('host-level').addEventListener('change', function (ev) { hostSetConfig({ cpuLevel: ev.target.value }); });
+
+  $('btn-host-start').addEventListener('click', function () {
+    if (!host) return;
+    try {
+      $('host-room-msg').textContent = '';
+      host.start();
+    } catch (e) {
+      $('host-room-msg').textContent = e && e.message ? e.message : '開始できません';
+    }
+  });
+  $('btn-host-close').addEventListener('click', function () { leaveOnline(); });
+
+  // ---------- client ----------
+  function renderJoinLobby(lobby) {
+    lastLobby = lobby;
+    $('join-room-code').textContent = client ? client.roomCode : lobby.roomCode;
+    renderSeatList($('join-seat-list'), lobby, false);
+    $('join-config').textContent = configText(lobby.config);
+    if (!lobby.inGame && view) {
+      // host went back to its lobby: drop the finished game
+      view = null; lastMoveNo = -1; lastRoundLogged = 0;
+      $('join-room').hidden = false; $('join-setup').hidden = true;
+      show('screen-lobby');
+    }
+  }
+
+  function scheduleGiveUp() {
+    if (giveUpTimer) return;
+    giveUpTimer = setTimeout(function () {
+      giveUpTimer = null;
+      if (client && !client.isConnected()) {
+        showNetNotice('部屋は終了したようです。ロビーへ戻ってください。（再接続は続けています）', true);
+      }
+    }, HOST_GIVEUP_MS);
+  }
+
+  $('join-code').addEventListener('input', function (ev) {
+    var v = N ? N.normalizeCode(ev.target.value) : ev.target.value.toUpperCase();
+    if (v !== ev.target.value) ev.target.value = v;
+  });
+
+  $('btn-join').addEventListener('click', function () {
+    var code = N ? N.normalizeCode($('join-code').value) : '';
+    var name = $('join-name').value.trim().slice(0, 12);
+    if (!N || !N.isValidCode(code)) { $('join-msg').textContent = '部屋コードは6文字です'; return; }
+    if (!name) { $('join-msg').textContent = '名前を入力してください'; return; }
+    if (!peerAvailable()) { $('join-msg').textContent = '通信ライブラリ（PeerJS）を読み込めませんでした。ネットワークを確認して再読み込みしてください。'; return; }
+    lsSet(NAME_KEY, name);
+    $('join-msg').textContent = '接続中…';
+    $('btn-join').disabled = true;
+    var token = lsGet(SEAT_KEY_PREFIX + code) || undefined;
+    var c = N.createClient({ transport: N.createPeerTransport({ peerOptions: { debug: 0 } }), roomCode: code, name: name, seatToken: token });
+    c.onJoined(function (info) {
+      if (client !== c) return;
+      lsSet(SEAT_KEY_PREFIX + info.roomCode, info.seatToken);
+      disconnectedSince = null;
+      if (giveUpTimer) { clearTimeout(giveUpTimer); giveUpTimer = null; }
+      hideNetNotice();
+      sending = false;
+    });
+    c.onLobby(function (l) { if (client === c) renderJoinLobby(l); });
+    c.onView(function (v) {
+      if (client !== c) return;
+      var prevNo = view ? view.moveNo : -1;
+      view = v;
+      if (v.moveNo !== prevNo) { sending = false; selected = {}; takeSel = null; }
+      applyView();
+    });
+    c.onError(function (e) {
+      if (client !== c) return;
+      if (e.type === 'error') { sending = false; render(); flash(e.message || 'エラー'); return; }
+      if (e.type === 'reject') {
+        if (e.reason === 'in-progress' || e.reason === 'full') lsDel(SEAT_KEY_PREFIX + code);
+        failJoin(reasonText(e.reason));
+        return;
+      }
+      if (e.type === 'connect-failed') {
+        if (c.seat == null) failJoin(reasonText(e.reason === 'bad-code' ? 'bad-code' : 'connect-failed'));
+      }
+    });
+    c.onDisconnect(function (d) {
+      if (client !== c) return;
+      if (disconnectedSince == null) disconnectedSince = Date.now();
+      sending = false;
+      showNetNotice('ホストとの接続が切れました。再接続中…（' + d.attempt + '回目）', true);
+      scheduleGiveUp();
+      if (view) render();
+    });
+    c.onClosed(function (x) {
+      if (client !== c) return;
+      sending = false;
+      if (x.reason === 'replaced') {
+        // another tab took this seat with the same token: keep the token (that tab owns it) and just stop here
+        showNetNotice('別のタブで参加しました。この画面は切断されました。', true);
+        return;
+      }
+      lsDel(SEAT_KEY_PREFIX + code);
+      showNetNotice('部屋は終了しました。' + reasonText(x.reason) + '。', true);
+    });
+    function failJoin(text) {
+      if (client === c) { client = null; mode = 'local'; }
+      try { c.leave(); } catch (e) { /* ignore */ }
+      $('btn-join').disabled = false;
+      $('join-msg').textContent = text;
+    }
+    client = c;
+    mode = 'client';
+    resetOnlineUi();
+    c.connect().then(function () {
+      if (client !== c) return;
+      $('btn-join').disabled = false;
+      $('join-msg').textContent = '';
+      $('join-setup').hidden = true;
+      $('join-room').hidden = false;
+      $('join-room-code').textContent = c.roomCode;
+      if (lastLobby) renderJoinLobby(lastLobby);
+    }, function (err) {
+      if (client !== c) return;
+      failJoin(reasonText(err && err.reason));
+    });
+  });
+  $('btn-join-leave').addEventListener('click', function () {
+    if (client) lsDel(SEAT_KEY_PREFIX + client.roomCode);
+    leaveOnline();
+  });
+
+  // host leaving the page ends the room
+  window.addEventListener('beforeunload', function () {
+    if (host) { try { host.close('host-left'); } catch (e) { /* ignore */ } }
+    if (client) { try { client.leave(); } catch (e) { /* ignore */ } }
+  });
+
+  // ---------- init ----------
+  loadSettings();
+  renderLobby();
+  var savedName = lsGet(NAME_KEY) || '';
+  $('host-name').value = savedName;
+  $('join-name').value = savedName;
+  var roomParam = '';
+  try { roomParam = new URLSearchParams(location.search).get('room') || ''; } catch (e) { /* ignore */ }
+  if (roomParam && N) {
+    $('join-code').value = N.normalizeCode(roomParam);
+    setEntry('join');
+    try { if (!savedName) $('join-name').focus(); } catch (e) { /* ignore */ }
+  } else {
+    setEntry('local');
+  }
+  show('screen-lobby');
+})();
+</script>
+</body>
+</html>
