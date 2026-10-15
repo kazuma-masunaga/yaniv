@@ -616,8 +616,11 @@
         }
       }
     }
+    var hvNow = handValue(hand);
     var scoreFn = function (discard) {
-      var removed = handValue(discard);
+      // 「同じランクは1回だけ数える」ルールのため、捨てる組の点数ではなく
+      // 捨てた後に手札点がどれだけ下がるかで評価する。
+      var removed = hvNow - handValue(remainingAfter(hand, discard));
       var score = removed;
       if (strong) {
         // risk: leaving low cards for the next player
@@ -645,7 +648,7 @@
     var cands = bestDiscards(hand, scoreFn);
     var discard = cands.length === 1 ? cands[0] : pick(cands, rng);
     var remaining = remainingAfter(hand, discard);
-    var drawId = chooseDraw(state, remaining, handValue(discard), takeable, strong, rng);
+    var drawId = chooseDraw(state, remaining, hvNow - handValue(remaining), takeable, strong, rng);
     var move = { type: 'play', discard: discard.map(function (c) { return c.id; }), draw: drawId };
     // safety: ensure legality
     if (!isLegal(moves, move)) return pick(moves, rng);

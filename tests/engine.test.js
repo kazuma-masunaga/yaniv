@@ -443,6 +443,21 @@ test('normal CPU discards the group that minimizes remaining value and takes a u
   assert.equal(mv.draw, '2H', 'takes the 2 (pairs with 2C and is below deck expectation)');
 });
 
+test('normal CPU evaluates discards by remaining hand value (same rank counts once)', () => {
+  // 5,5,5,9: triple of 5s only removes 5 points under the duplicate rule, 9 removes 9
+  const s = fixture({
+    hands: [[C('5', 'H'), C('5', 'C'), C('5', 'S'), C('9', 'D')], [C('9', 'S'), C('K', 'H')]],
+    deck: [C('A', 'C')],
+    discardTop: { kind: 'single', cards: [C('K', 'C')] }
+  });
+  s.discardPile[0].by = 1;
+  for (const lvl of ['normal', 'strong']) {
+    const mv = E.chooseMove(s, 0, lvl, E.createRng(1));
+    assert.equal(mv.type, 'play');
+    assert.deepEqual(mv.discard, ['9D'], lvl + ' should discard the 9');
+  }
+});
+
 test('validateConfig truncates names to 20 chars and stringifies', () => {
   const g = E.createGame({ players: [{ name: 'a'.repeat(40), type: 'human' }, { name: 12345, type: 'cpu' }], jokers: 0, limit: 31, cpuLevel: 'weak' }, E.createRng(1));
   assert.equal(g.players[0].name.length, 20);
