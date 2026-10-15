@@ -757,6 +757,232 @@ test('#6 defaultRandom-based codes/tokens are well-formed and not constant', () 
   for (const t of tokens) assert.match(t, /^[A-Za-z0-9]{16}$/);
 });
 
+// ---------- stamps ----------
+/** Room with an injectable clock for the stamp rate limit. */
+async function stampRoom(opts = {}) {
+  const hub = N.createMemoryHub();
+  const clock = { t: 100000 };
+  const host = N.createHost({
+    transport: hub.createTransport(), engine: E, rng: E.createRng(7), random: E.createRng(8),
+    hostName: 'H', cpuDelay: [0, 0], now: () => clock.t
+  });
+  const code = await host.open();
+  host.setConfig(opts.config || { seatCount: 3 });
+  host.stamps = [];
+  host.onStamp((s) => host.stamps.push(s));
+  const clients = [];
+  for (const name of opts.names || ['A', 'B']) {
+    const c = await joinClient(hub, code, name);
+    c.stamps = [];
+    c.onStamp((s) => c.stamps.push(s));
+    clients.push(c);
+  }
+  await hub.settle();
+  return { hub, host, code, clients, clock };
+}
+
+test('stamps: STAMPS has 8 fixed ids; isStampId', () => {
+  assert.equal(N.STAMPS.length, 8);
+  assert.deepEqual(N.STAMPS.map((s) => s.id), ['joy', 'angry', 'sad', 'smug', 'shock', 'think', 'clap', 'pray']);
+  N.STAMPS.forEach((s) => { assert.ok(s.emoji && s.label); assert.ok(N.isStampId(s.id)); });
+  assert.equal(N.isStampId('nope'), false);
+  assert.equal(N.isStampId(null), false);
+  assert.equal(N.isStampId(3), false);
+  assert.equal(N.STAMP_INTERVAL_MS, 1500);
+});
+
+test('stamps: a valid stamp during play reaches everyone (host UI included) with the sender seat', async () => {
+  const { host, clients, hub } = await stampRoom();
+  host.start();
+  await hub.settle();
+  assert.equal(clients[0].sendStamp('clap'), true);
+  await hub.settle();
+  assert.deepEqual(host.stamps, [{ seat: 1, id: 'clap' }]);
+  assert.deepEqual(clients[0].stamps, [{ seat: 1, id: 'clap' }], 'sender sees its own stamp echoed');
+  assert.deepEqual(clients[1].stamps, [{ seat: 1, id: 'clap' }]);
+  host.close();
+});
+
+test('stamps: host.sendStamp goes through the same path and is delivered', async () => {
+  const { host, clients, hub, clock } = await stampRoom();
+  // not playing yet -> ignored
+  assert.equal(host.sendStamp('joy'), false);
+  host.start();
+  await hub.settle();
+  assert.equal(host.sendStamp('joy'), true);
+  await hub.settle();
+  assert.deepEqual(host.stamps, [{ seat: 0, id: 'joy' }]);
+  clients.forEach((c) => assert.deepEqual(c.stamps, [{ seat: 0, id: 'joy' }]));
+  // host is rate limited too
+  assert.equal(host.sendStamp('sad'), false);
+  clock.t += 1500;
+  assert.equal(host.sendStamp('sad'), true);
+  assert.equal(host.sendStamp('bogus'), false);
+  host.close();
+});
+
+test('stamps: unknown id over the wire is ignored silently (no error message)', async () => {
+  const { host, clients, hub } = await stampRoom({ config: { seatCount: 3 }, names: ['A'] });
+  // a raw connection that takes the last seat before the game starts, so it can speak the protocol directly
+  const t = hub.createTransport();
+  await t.open();
+  const raw = t.connect(N.peerIdFor(host.roomCode));
+  const got = [];
+  raw.onMessage((m) => got.push(m));
+  raw.send({ t: 'join', name: 'Raw', proto: N.PROTO });
+  await hub.settle();
+  assert.ok(got.some((m) => m && m.t === 'joined' && m.seat === 2), 'raw seated at 2');
+  host.start();
+  await hub.settle();
+  // client-side guard refuses locally
+  assert.equal(clients[0].sendStamp('bogus'), false);
+  // wire-level bogus ids
+  for (const id of ['bogus', 'JOY', '', 42, null, ['joy'], { id: 'joy' }]) { raw.send({ t: 'stamp', id }); await hub.settle(); }
+  assert.equal(host.stamps.length, 0);
+  assert.ok(!got.some((m) => m && m.t === 'error'), 'no error sent back');
+  assert.equal(clients[0].stamps.length, 0);
+  // a valid one from the same raw seat is delivered
+  raw.send({ t: 'stamp', id: 'shock' });
+  await hub.settle();
+  assert.deepEqual(host.stamps, [{ seat: 2, id: 'shock' }]);
+  assert.deepEqual(clients[0].stamps, [{ seat: 2, id: 'shock' }]);
+  assert.ok(got.some((m) => m && m.t === 'stamp' && m.seat === 2 && m.id === 'shock'), 'echoed back to sender');
+  t.close();
+  host.close();
+});
+
+test('stamps: second stamp within 1500ms from the same seat is dropped; other seats unaffected', async () => {
+  const { host, clients, hub, clock } = await stampRoom();
+  host.start();
+  await hub.settle();
+  clients[0].sendStamp('joy');
+  await hub.settle();
+  clock.t += 1499;
+  clients[0].sendStamp('angry');
+  await hub.settle();
+  assert.deepEqual(host.stamps.map((s) => s.id), ['joy'], 'second within window dropped');
+  assert.equal(clients[1].stamps.length, 1);
+  assert.equal(clients[0].errors.length, 0, 'dropped silently, no error');
+  // another seat is on its own timer
+  clients[1].sendStamp('pray');
+  await hub.settle();
+  assert.deepEqual(host.stamps.map((s) => s.id), ['joy', 'pray']);
+  // exactly 1500ms after the first -> accepted
+  clock.t += 1;
+  clients[0].sendStamp('angry');
+  await hub.settle();
+  assert.deepEqual(host.stamps.map((s) => s.id), ['joy', 'pray', 'angry']);
+  assert.deepEqual(clients[1].stamps.map((s) => s.seat + ':' + s.id), ['1:joy', '2:pray', '1:angry']);
+  host.close();
+});
+
+test('stamps: ignored from CPU seats and disconnected seats', async () => {
+  const { host, clients, hub } = await stampRoom({ config: { seatCount: 4 } });
+  host.start();
+  await hub.settle();
+  assert.equal(host.state().players[3].type, 'cpu');
+  // a client disconnects: its seat stays human but connected=false
+  const a = clients[0];
+  const token = a.info.seatToken;
+  a.leave();
+  await hub.settle();
+  assert.equal(host.lobby().seats[1].connected, false);
+  // the client has no conn -> sendStamp returns false locally
+  assert.equal(a.sendStamp('joy'), false);
+  // host-side: replaced-by-CPU seat can't stamp either. Simulate by replacing seat 2 and checking nothing arrives.
+  host.replaceWithCpu(2);
+  await hub.settle();
+  assert.equal(clients[1].sendStamp('joy'), false, 'replaced client lost its connection');
+  await hub.settle();
+  assert.equal(host.stamps.length, 0);
+  // reconnect seat 1 and stamp -> works again
+  const a2 = await joinClient(hub, host.roomCode, 'A', { seatToken: token });
+  a2.stamps = []; a2.onStamp((s) => a2.stamps.push(s));
+  await hub.settle();
+  if (host.state().phase === 'playing') {
+    assert.equal(a2.sendStamp('smug'), true);
+    await hub.settle();
+    assert.deepEqual(host.stamps, [{ seat: 1, id: 'smug' }]);
+    assert.deepEqual(a2.stamps, [{ seat: 1, id: 'smug' }]);
+  }
+  a2.leave();
+  host.close();
+});
+
+test('stamps: ignored outside the playing phase (lobby, roundEnd, gameOver)', async () => {
+  const { host, clients, hub, clock } = await stampRoom({ config: { seatCount: 2, limit: 31 }, names: ['A'] });
+  // lobby
+  clients[0].sendStamp('joy');
+  await hub.settle();
+  assert.equal(host.stamps.length, 0);
+  host.start();
+  await hub.settle();
+  // run until a roundEnd or gameOver
+  let guard = 0;
+  while (host.state().phase === 'playing' && guard++ < 2000) {
+    const st = host.state();
+    const legal = E.legalMoves(st);
+    if (st.currentPlayer === 0) host.submitMove(legal[0]);
+    else clients[0].submitMove(legal[0]);
+    await hub.settle();
+  }
+  assert.notEqual(host.state().phase, 'playing');
+  clock.t += 10000;
+  clients[0].sendStamp('joy');
+  assert.equal(host.sendStamp('joy'), false);
+  await hub.settle();
+  assert.equal(host.stamps.length, 0, 'nothing delivered at ' + host.state().phase);
+  assert.equal(clients[0].stamps.length, 0);
+  assert.equal(clients[0].errors.length, 0);
+  host.close();
+});
+
+test('stamps: malformed stamp messages do not break host or client', async () => {
+  const { host, clients, hub } = await stampRoom();
+  const errors = [];
+  host.onError((e) => errors.push(e));
+  host.start();
+  await hub.settle();
+  // raw unseated connection throwing junk stamps at the host
+  const t = hub.createTransport();
+  await t.open();
+  const raw = t.connect(N.peerIdFor(host.roomCode));
+  const got = [];
+  raw.onMessage((m) => got.push(m));
+  const junk = [{ t: 'stamp' }, { t: 'stamp', id: 1 }, { t: 'stamp', id: null }, { t: 'stamp', id: { a: 1 } }, { t: 'stamp', id: 'joy', seat: 0 }, { t: 'stamp', id: '<img>' }];
+  for (const j of junk) { raw.send(j); await hub.settle(); }
+  assert.equal(errors.length, 0, JSON.stringify(errors));
+  assert.equal(host.stamps.length, 0);
+  assert.ok(!got.some((m) => m && m.t === 'error'), 'host never answers a stamp with error');
+  // host still alive: a seated client stamps fine
+  assert.equal(clients[1].sendStamp('think'), true);
+  await hub.settle();
+  assert.deepEqual(host.stamps, [{ seat: 2, id: 'think' }]);
+  t.close();
+  // fake host feeding garbage stamps to a client
+  const fakeHub = N.createMemoryHub();
+  const ft = fakeHub.createTransport();
+  await ft.open(N.peerIdFor('STAMP1'));
+  let hc = null;
+  ft.onConnection((cn) => { hc = cn; cn.onMessage(() => {}); });
+  const v = N.createClient({ transport: fakeHub.createTransport(), roomCode: 'STAMP1', name: 'V', connectTimeoutMs: 0, backoff: [1] });
+  const stamps = [];
+  v.onStamp((s) => stamps.push(s));
+  v.connect().catch(() => {});
+  await fakeHub.settle();
+  hc.send({ t: 'joined', seat: 0, seatToken: 'abcdefghijklmnop', roomCode: 'STAMP1' });
+  const bad = [{ t: 'stamp' }, { t: 'stamp', seat: 1 }, { t: 'stamp', seat: 1, id: 'nope' }, { t: 'stamp', seat: 'x', id: 'joy' }, { t: 'stamp', seat: 5, id: 'joy' },
+    { t: 'stamp', seat: -1, id: 'joy' }, { t: 'stamp', seat: 1.5, id: 'joy' }, { t: 'stamp', seat: 1, id: '<script>' }];
+  for (const b of bad) hc.send(b);
+  await fakeHub.settle();
+  assert.equal(stamps.length, 0, 'all malformed stamps rejected');
+  hc.send({ t: 'stamp', seat: 4, id: 'pray' });
+  await fakeHub.settle();
+  assert.deepEqual(stamps, [{ seat: 4, id: 'pray' }], 'client still alive and accepts a valid stamp');
+  v.leave(); ft.close();
+  host.close();
+});
+
 test('normalizeMove / sanitizeName / normalizeCode', () => {
   assert.deepEqual(N.normalizeMove({ type: 'yaniv', junk: 1 }), { type: 'yaniv' });
   assert.deepEqual(N.normalizeMove({ type: 'play', discard: ['5S'], draw: 'deck' }), { type: 'play', discard: ['5S'], draw: 'deck' });

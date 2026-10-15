@@ -33,6 +33,24 @@
   var NAME_MAX = 12;
   var MAX_CODE_ATTEMPTS = 5;
   var PEER_PREFIX = 'yaniv-';
+  var STAMP_INTERVAL_MS = 1500;
+
+  /** Stamps (online only). Fixed ids -> emoji/label; the UI renders only these strings. */
+  var STAMPS = [
+    { id: 'joy', emoji: '😆', label: '嬉しい' },
+    { id: 'angry', emoji: '😡', label: '怒り' },
+    { id: 'sad', emoji: '😭', label: '悲しい' },
+    { id: 'smug', emoji: '😏', label: 'ドヤ' },
+    { id: 'shock', emoji: '😱', label: 'やばい' },
+    { id: 'think', emoji: '🤔', label: '考え中' },
+    { id: 'clap', emoji: '👏', label: 'ナイス' },
+    { id: 'pray', emoji: '🙏', label: 'お願い' }
+  ];
+  function isStampId(id) {
+    if (typeof id !== 'string') return false;
+    for (var i = 0; i < STAMPS.length; i++) if (STAMPS[i].id === id) return true;
+    return false;
+  }
 
   // ---------- small helpers ----------
   function isObj(x) { return !!x && typeof x === 'object' && !Array.isArray(x); }
@@ -390,6 +408,7 @@
     var rng = typeof opts.rng === 'function' ? opts.rng : E.createRng((random() * 0xffffffff) >>> 0);
     var codeGen = typeof opts.codeGen === 'function' ? opts.codeGen : function () { return randomCode(random); };
     var cpuDelay = Array.isArray(opts.cpuDelay) ? opts.cpuDelay : [600, 900];
+    var now = typeof opts.now === 'function' ? opts.now : function () { return Date.now(); };
 
     var config = { jokers: 2, limit: 101, cpuLevel: 'normal', starter: 'zero', seatCount: 3 };
     var seats = [];
@@ -400,14 +419,15 @@
     var lobbyHandlers = [];
     var stateHandlers = [];
     var errorHandlers = [];
+    var stampHandlers = [];
 
     function makeSeat(i) {
-      return { type: 'empty', name: '', token: null, conn: null, connected: false, isHost: false };
+      return { type: 'empty', name: '', token: null, conn: null, connected: false, isHost: false, lastStamp: -Infinity };
     }
     function initSeats() {
       seats = [];
       for (var i = 0; i < config.seatCount; i++) seats.push(makeSeat(i));
-      seats[0] = { type: 'human', name: sanitizeName(opts.hostName) || 'ホスト', token: null, conn: null, connected: true, isHost: true };
+      seats[0] = { type: 'human', name: sanitizeName(opts.hostName) || 'ホスト', token: null, conn: null, connected: true, isHost: true, lastStamp: -Infinity };
     }
     initSeats();
 
@@ -574,7 +594,7 @@
       var free = -1;
       for (var i = 0; i < seats.length; i++) if (seats[i].type === 'empty') { free = i; break; }
       if (free < 0) { sendSafe(conn, { t: 'reject', reason: 'full' }); conn.close('rejected'); return; }
-      seats[free] = { type: 'human', name: name, token: randomToken(random), conn: conn, connected: true, isHost: false };
+      seats[free] = { type: 'human', name: name, token: randomToken(random), conn: conn, connected: true, isHost: false, lastStamp: -Infinity };
       sendSafe(conn, { t: 'joined', seat: free, seatToken: seats[free].token, roomCode: host.roomCode });
       broadcastLobby();
     }
@@ -586,11 +606,40 @@
       if (err) sendSafe(conn, { t: 'error', message: err });
     }
 
+    // ---------- stamps ----------
+    /**
+     * Validate and broadcast a stamp from `seat`. Silently ignored (returns false) unless:
+     * the seat is a connected human, the id is known, the game is 'playing', and
+     * STAMP_INTERVAL_MS has passed since that seat's previous stamp.
+     */
+    function doStamp(seat, id) {
+      if (closed || !isInt(seat) || seat < 0 || seat >= seats.length) return false;
+      var s = seats[seat];
+      if (s.type !== 'human' || !s.connected) return false;
+      if (!isStampId(id)) return false;
+      if (!state || state.phase !== 'playing') return false;
+      var t = now();
+      var prev = typeof s.lastStamp === 'number' ? s.lastStamp : -Infinity;
+      if (t - prev < STAMP_INTERVAL_MS) return false;
+      s.lastStamp = t;
+      var msg = { t: 'stamp', seat: seat, id: id };
+      eachClient(function (c) { sendSafe(c.conn, msg); });
+      callAll(stampHandlers, { seat: seat, id: id });
+      return true;
+    }
+
+    function onStamp(conn, msg) {
+      var seat = seatIndexOfConn(conn);
+      if (seat < 0) return;
+      doStamp(seat, msg.id);
+    }
+
     function handleMessage(conn, msg) {
       try {
         if (!isObj(msg) || typeof msg.t !== 'string') return;
         if (msg.t === 'join') onJoin(conn, msg);
         else if (msg.t === 'move') onMove(conn, msg);
+        else if (msg.t === 'stamp') onStamp(conn, msg);
         else if (msg.t === 'ping') sendSafe(conn, { t: 'pong' });
         // unknown: ignore
       } catch (e) {
@@ -667,7 +716,7 @@
       var humans = 0;
       var players = seats.map(function (s, i) {
         if (s.type === 'empty') {
-          seats[i] = { type: 'cpu', name: 'CPU ' + (i + 1), token: null, conn: null, connected: false, isHost: false };
+          seats[i] = { type: 'cpu', name: 'CPU ' + (i + 1), token: null, conn: null, connected: false, isHost: false, lastStamp: -Infinity };
           return { name: seats[i].name, type: 'cpu' };
         }
         if (s.type === 'cpu') return { name: s.name || 'CPU ' + (i + 1), type: 'cpu' };
@@ -778,9 +827,13 @@
       try { transport.close(); } catch (e) { /* ignore */ }
     };
 
+    /** Host's own stamp: goes through the same validation/rate limit as a client's. Returns true if delivered. */
+    host.sendStamp = function (id) { return doStamp(0, id); };
+
     host.onLobbyChange = function (fn) { lobbyHandlers.push(fn); };
     host.onStateChange = function (fn) { stateHandlers.push(fn); };
     host.onError = function (fn) { errorHandlers.push(fn); };
+    host.onStamp = function (fn) { stampHandlers.push(fn); };
 
     return host;
   }
@@ -803,7 +856,7 @@
     var connectTimeoutMs = isInt(opts.connectTimeoutMs) ? opts.connectTimeoutMs : 10000;
     var backoff = Array.isArray(opts.backoff) && opts.backoff.length ? opts.backoff : [2000, 4000, 8000, 16000, 30000];
 
-    var H = { lobby: [], view: [], error: [], disconnect: [], joined: [], closed: [] };
+    var H = { lobby: [], view: [], error: [], disconnect: [], joined: [], closed: [], stamp: [] };
     var client = { seat: null, seatToken: seatToken, roomCode: roomCode };
 
     var opened = false;
@@ -934,6 +987,10 @@
             settlePending(Object.assign(new Error('closed: ' + r2), { reason: r2 }));
             if (conn) { var c1 = conn; conn = null; c1.close('closed'); }
             break;
+          case 'stamp':
+            if (!isInt(msg.seat) || msg.seat < 0 || msg.seat > 4 || !isStampId(msg.id)) return;
+            callAll(H.stamp, { seat: msg.seat, id: msg.id });
+            break;
           case 'pong':
             break;
           default:
@@ -1037,6 +1094,11 @@
       return true;
     };
     client.ping = function () { if (conn) conn.send({ t: 'ping' }); };
+    client.sendStamp = function (id) {
+      if (!conn || !isStampId(id)) return false;
+      conn.send({ t: 'stamp', id: id });
+      return true;
+    };
     client.isConnected = function () { return !!conn; };
     client.leave = function () {
       stopped = true;
@@ -1051,6 +1113,7 @@
     client.onDisconnect = function (fn) { H.disconnect.push(fn); };
     client.onJoined = function (fn) { H.joined.push(fn); };
     client.onClosed = function (fn) { H.closed.push(fn); };
+    client.onStamp = function (fn) { H.stamp.push(fn); };
 
     return client;
   }
@@ -1059,6 +1122,9 @@
     PROTO: PROTO,
     CODE_LEN: CODE_LEN,
     NAME_MAX: NAME_MAX,
+    STAMPS: STAMPS,
+    STAMP_INTERVAL_MS: STAMP_INTERVAL_MS,
+    isStampId: isStampId,
     randomCode: randomCode,
     randomToken: randomToken,
     normalizeCode: normalizeCode,

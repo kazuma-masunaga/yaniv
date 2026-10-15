@@ -413,9 +413,52 @@
     background: var(--surface); border: 2px dashed var(--line); border-radius: 14px; padding: 8px 12px; font-weight: 700; color: var(--muted);
   }
   .online-bar .grow { flex: 1 1 auto; }
-  .opp .conn { position: absolute; right: 8px; bottom: 8px; }
-  .opp.turn .conn { bottom: 6px; }
+  /* 接続状態バッジは累計の下に置く（スマホ幅で累計に重ならないように） */
+  .opp .conn { justify-self: start; margin-top: 2px; }
   input.code-input { font-family: var(--font-display); font-size: 1.4rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 800; }
+  /* ---------- Stamps (online only) ---------- */
+  .tray-head { position: relative; }
+  .tray-right { display: flex; align-items: center; gap: 10px; }
+  #btn-stamp { white-space: nowrap; }
+  #btn-stamp[aria-expanded="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  .stamp-picker {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 8px; border-radius: 12px; background: var(--surface-2);
+  }
+  .stamp-opt {
+    display: grid; justify-items: center; gap: 0;
+    padding: 6px 8px; border-radius: 10px; min-width: 64px; line-height: 1.1;
+  }
+  .stamp-opt .st-emoji { font-size: 1.5rem; line-height: 1.1; }
+  .stamp-opt .st-label { font-size: 0.7rem; color: var(--muted); }
+  .stamp-anchor { position: relative; display: inline-block; width: 0; height: 0; vertical-align: baseline; }
+  .stamp-bubble {
+    position: absolute; z-index: 5;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 14px;
+    background: var(--surface); color: var(--fg);
+    border: 2px solid var(--accent); box-shadow: 0 4px 10px var(--shadow);
+    white-space: nowrap; pointer-events: none;
+    transform-origin: 50% 100%;
+    animation: stampPop 2.5s ease both;
+  }
+  .stamp-bubble::after {
+    content: ''; position: absolute; left: 50%; bottom: -7px; width: 10px; height: 10px;
+    background: var(--surface); border-right: 2px solid var(--accent); border-bottom: 2px solid var(--accent);
+    transform: translateX(-50%) rotate(45deg);
+  }
+  .stamp-bubble .st-emoji { font-size: 1.6rem; line-height: 1; }
+  .stamp-bubble .st-label { font-size: 0.72rem; font-weight: 700; color: var(--muted); }
+  .opp .stamp-bubble { left: 0; right: 0; margin: 0 auto; width: max-content; bottom: calc(100% - 4px); }
+  .stamp-anchor .stamp-bubble { left: 0; bottom: calc(100% + 10px); transform-origin: 10% 100%; }
+  @keyframes stampPop {
+    0% { opacity: 0; transform: translateY(8px) scale(0.6); }
+    12% { opacity: 1; transform: translateY(0) scale(1.08); }
+    20% { transform: translateY(0) scale(1); }
+    82% { opacity: 1; transform: translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateY(-6px) scale(0.96); }
+  }
+
   @media (max-width: 460px) {
     .entries { grid-template-columns: 1fr; }
     .entries button { grid-template-columns: auto 1fr; justify-items: start; text-align: left; column-gap: 10px; }
@@ -681,11 +724,16 @@
       <div class="tray" id="tray">
         <div class="tray-head">
           <div>
+            <span class="stamp-anchor" id="my-stamp-anchor"></span>
             <span class="eyebrow" id="hand-owner">あなたの手札</span>
             <span class="muted small nums" id="hand-score"></span>
           </div>
-          <div>合計 <span class="total nums" id="hand-total">0</span></div>
+          <div class="tray-right">
+            <div>合計 <span class="total nums" id="hand-total">0</span></div>
+            <button type="button" class="btn-sm" id="btn-stamp" hidden aria-expanded="false" aria-controls="stamp-picker">😊 スタンプ</button>
+          </div>
         </div>
+        <div class="stamp-picker" id="stamp-picker" hidden role="group" aria-label="スタンプを選ぶ"></div>
         <div class="hand" id="hand"></div>
         <div class="msg" id="msg" aria-live="polite"></div>
         <div class="actions">
@@ -1133,6 +1181,7 @@
       if (i === me) return;
       var d = document.createElement('div');
       d.className = 'opp' + (i === cur ? ' turn' : '') + (p.eliminated ? ' out' : '');
+      d.dataset.seat = String(i);
       var connHtml = '';
       if (online && V.seats && V.seats[i] && p.type === 'human' && !V.seats[i].isHost) {
         connHtml = V.seats[i].connected
@@ -1206,6 +1255,10 @@
       });
       updateButtons(myTurn, vp, takeable);
     }
+    // stamp button: online modes only (local games never show it)
+    $('btn-stamp').hidden = !online;
+    if (!online) setPickerOpen(false);
+    reattachStamps();
 
     // waiting indicator
     var waiting = $('waiting');
@@ -1352,6 +1405,118 @@
     var seat = parseInt(this.dataset.seat, 10);
     try { host.replaceWithCpu(seat); } catch (e) { flash(e && e.message ? e.message : 'エラー'); }
   });
+
+  // ---------- stamps (online only) ----------
+  var STAMP_SHOW_MS = 2500;
+  // ホスト側の判定（1500ms）より少し長く待たせ、通信の揺らぎで2発目が黙って落ちるのを防ぐ
+  var STAMP_COOLDOWN_MS = ((N && N.STAMP_INTERVAL_MS) || 1500) + 300;
+  var STAMP_BY_ID = Object.create(null);
+  (N ? N.STAMPS : []).forEach(function (s) { STAMP_BY_ID[s.id] = s; });
+  var activeStamps = {};    // seat -> { el, at, timer }
+  var stampCooldown = null;
+  var pickerOpen = false;
+
+  function stampInnerHtml(id) {
+    var s = STAMP_BY_ID[id];
+    if (!s) return '';
+    // fixed strings from STAMPS only; nothing user-provided goes in here
+    return '<span class="st-emoji" aria-hidden="true">' + s.emoji + '</span><span class="st-label">' + s.label + '</span>';
+  }
+
+  function buildStampPicker() {
+    var picker = $('stamp-picker');
+    picker.innerHTML = '';
+    (N ? N.STAMPS : []).forEach(function (s) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'stamp-opt';
+      b.dataset.stamp = s.id;
+      b.innerHTML = stampInnerHtml(s.id);
+      b.setAttribute('aria-label', s.label);
+      picker.appendChild(b);
+    });
+  }
+
+  function setPickerOpen(open) {
+    pickerOpen = !!open;
+    $('stamp-picker').hidden = !pickerOpen;
+    $('btn-stamp').setAttribute('aria-expanded', String(pickerOpen));
+  }
+
+  function startStampCooldown() {
+    var b = $('btn-stamp');
+    b.disabled = true;
+    if (stampCooldown) clearTimeout(stampCooldown);
+    stampCooldown = setTimeout(function () { stampCooldown = null; b.disabled = false; }, STAMP_COOLDOWN_MS);
+  }
+
+  function sendStamp(id) {
+    if (mode === 'local' || !STAMP_BY_ID[id]) return;
+    var ok = false;
+    if (mode === 'host' && host) ok = host.sendStamp(id);
+    else if (mode === 'client' && client) ok = client.sendStamp(id);
+    if (ok) startStampCooldown();
+  }
+
+  /** Where seat `seat`'s bubble lives right now (null when that card is not on screen). */
+  function stampTarget(seat) {
+    var V = currentView();
+    if (!V) return null;
+    if (seat === V.seat) return $('my-stamp-anchor');
+    return $('opponents').querySelector('.opp[data-seat="' + num(seat) + '"]');
+  }
+
+  function clearStamp(seat) {
+    var a = activeStamps[seat];
+    if (!a) return;
+    if (a.timer) clearTimeout(a.timer);
+    if (a.el && a.el.parentNode) a.el.parentNode.removeChild(a.el);
+    delete activeStamps[seat];
+  }
+  function clearAllStamps() {
+    Object.keys(activeStamps).forEach(function (k) { clearStamp(+k); });
+    if (stampCooldown) { clearTimeout(stampCooldown); stampCooldown = null; }
+    $('btn-stamp').disabled = false;
+    setPickerOpen(false);
+  }
+
+  /** Show (or replace) the bubble for `seat`. */
+  function showStamp(seat, id) {
+    if (mode === 'local' || !STAMP_BY_ID[id]) return;
+    clearStamp(seat);
+    var el = document.createElement('span');
+    el.className = 'stamp-bubble';
+    el.setAttribute('role', 'status');
+    el.innerHTML = stampInnerHtml(id);
+    var rec = { el: el, at: Date.now(), timer: null };
+    rec.timer = setTimeout(function () { clearStamp(seat); }, STAMP_SHOW_MS);
+    activeStamps[seat] = rec;
+    attachStamp(seat);
+  }
+
+  /** (Re)attach a live bubble to its seat's card; resumes the CSS animation where it left off. */
+  function attachStamp(seat) {
+    var a = activeStamps[seat];
+    if (!a) return;
+    var target = stampTarget(seat);
+    if (!target) { if (a.el.parentNode) a.el.parentNode.removeChild(a.el); return; }
+    if (a.el.parentNode === target) return;
+    var elapsed = Date.now() - a.at;
+    a.el.style.animationDelay = '-' + Math.min(elapsed, STAMP_SHOW_MS) + 'ms';
+    target.appendChild(a.el);
+  }
+  function reattachStamps() {
+    Object.keys(activeStamps).forEach(function (k) { attachStamp(+k); });
+  }
+
+  $('btn-stamp').addEventListener('click', function () { setPickerOpen(!pickerOpen); });
+  $('stamp-picker').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button[data-stamp]');
+    if (!b) return;
+    setPickerOpen(false);
+    sendStamp(b.dataset.stamp);
+  });
+  buildStampPicker();
 
   // ---------- round end ----------
   function renderRoundEnd(V) {
@@ -1549,6 +1714,8 @@
     $('btn-replace-cpu').hidden = true;
     $('btn-quit').textContent = '設定に戻る';
     $('btn-lobby').textContent = '設定に戻る';
+    clearAllStamps();
+    $('btn-stamp').hidden = true;
   }
 
   /** Leave whatever room we are in and go back to the lobby. */
@@ -1641,6 +1808,7 @@
       applyView();
     });
     h.onError(function (e) { if (host === h) { pushLog('<span class="who">エラー</span> ' + esc(e.message || '')); render(); } });
+    h.onStamp(function (s) { if (host === h) showStamp(s.seat, s.id); });
     h.open().then(function (code) {
       if (host !== null) { h.close(); return; }
       host = h;
@@ -1753,6 +1921,7 @@
       sending = false;
     });
     c.onLobby(function (l) { if (client === c) renderJoinLobby(l); });
+    c.onStamp(function (s) { if (client === c) showStamp(s.seat, s.id); });
     c.onView(function (v) {
       if (client !== c) return;
       var prevNo = view ? view.moveNo : -1;
