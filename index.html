@@ -664,6 +664,7 @@
         <div class="tray-head">
           <div>
             <span class="eyebrow" id="hand-owner">あなたの手札</span>
+            <span class="muted small nums" id="hand-score"></span>
           </div>
           <div>合計 <span class="total nums" id="hand-total">0</span></div>
         </div>
@@ -1166,6 +1167,7 @@
       tray.hidden = false;
       var vp = V.players[me];
       $('hand-owner').textContent = (!online && humanCount() >= 2 ? vp.name + 'の手札' : 'あなたの手札');
+      $('hand-score').textContent = '累計 ' + num(vp.score) + ' / ' + num(V.config && V.config.limit);
       var total = E.handValue(vp.hand);
       var totalEl = $('hand-total');
       totalEl.textContent = total;
