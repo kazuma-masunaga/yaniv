@@ -226,14 +226,29 @@ test('yaniv success: declarer 0, others add hand value', () => {
   assert.deepEqual(s2.roundResult.entries[1].hand.map((c) => c.id), ['9S', 'KD']);
 });
 
-test('assaf: equal value counts; declarer gets value + 30', () => {
+test('assaf: equal value does NOT counter; declarer wins the tie', () => {
   const s = fixture({
     hands: [[C('3', 'S'), C('4', 'D')], [C('9', 'S'), C('K', 'D')], [C('2', 'C'), C('5', 'C')]],
     deck: [C('A', 'C')],
     discardTop: { kind: 'single', cards: [C('5', 'H')] }
   });
   const s2 = E.applyMove(s, { type: 'yaniv' }, E.createRng(1));
+  assert.equal(s2.roundResult.assaf, null);
+  assert.deepEqual(s2.players.map((p) => p.score), [0, 19, 7]);
+  assert.equal(s2.roundResult.entries[0].role, 'yaniv');
+  assert.equal(s2.nextStarter, 0);
+});
+
+test('assaf: strictly lower value counters; declarer gets value + 30', () => {
+  const s = fixture({
+    hands: [[C('3', 'S'), C('4', 'D')], [C('9', 'S'), C('K', 'D')], [C('2', 'C'), C('4', 'C')]],
+    deck: [C('A', 'C')],
+    discardTop: { kind: 'single', cards: [C('5', 'H')] }
+  });
+  const s2 = E.applyMove(s, { type: 'yaniv' }, E.createRng(1));
   assert.equal(s2.roundResult.assaf, 2);
+  assert.equal(s2.roundResult.declarerValue, 7);
+  assert.equal(s2.roundResult.entries[2].value, 6);
   assert.deepEqual(s2.players.map((p) => p.score), [37, 19, 0]);
   assert.equal(s2.roundResult.entries[0].role, 'caught');
   assert.equal(s2.roundResult.entries[2].role, 'assaf');
@@ -323,7 +338,7 @@ test("starter 'highest': the player with the largest added score opens the next 
   assert.equal(s3.currentPlayer, 1);
   // caught declarer (value + 30) is the highest -> declarer starts
   const t = highestFixture({
-    hands: [[C('3', 'S'), C('4', 'D')], [C('9', 'S'), C('K', 'D')], [C('2', 'C'), C('5', 'C')]],
+    hands: [[C('3', 'S'), C('4', 'D')], [C('9', 'S'), C('K', 'D')], [C('2', 'C'), C('4', 'C')]],
     deck: [C('A', 'C')],
     discardTop: { kind: 'single', cards: [C('5', 'H')] }
   });

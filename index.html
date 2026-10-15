@@ -354,8 +354,26 @@
     .card .big { font-size: 1.5rem; }
     .felt-row { gap: 14px; }
   }
+  /* ---------- ヤニブ返し banner ---------- */
+  .assaf-banner {
+    position: relative; overflow: hidden;
+    border: 2px solid var(--bad); border-radius: 16px;
+    background: var(--bad-soft); color: var(--fg);
+    padding: 14px 16px; text-align: center;
+    display: grid; gap: 4px;
+    animation: bannerIn 0.6s cubic-bezier(.2,1.4,.4,1) both;
+  }
+  .assaf-banner .big { font-size: 1.6rem; font-weight: 800; letter-spacing: 0.04em; color: var(--bad); animation: shake 0.6s 0.25s both; }
+  .assaf-banner .vs { font-size: 1.05rem; }
+  .assaf-banner .vs b { font-size: 1.3rem; }
+  .assaf-banner .spark { position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); opacity: 0; animation: spark 0.9s 0.2s ease-out both; }
+  @keyframes bannerIn { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @keyframes shake { 0%,100% { transform: translateX(0); } 20% { transform: translateX(-6px) rotate(-1.5deg); } 40% { transform: translateX(6px) rotate(1.5deg); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
+  @keyframes spark { 0% { transform: translate(-50%,-50%) scale(1); opacity: 1; } 100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.2); opacity: 0; } }
+  .screen-round-assaf #res-title { color: var(--bad); animation: shake 0.6s 0.2s both; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; animation: none !important; }
+    .assaf-banner .spark { display: none; }
     .dots::after { content: '…'; }
   }
 
@@ -491,7 +509,7 @@
           <li>手番では「ヤニブ宣言」か「捨てて1枚引く」のどちらか。ヤニブは手札合計7点以下のときだけ。</li>
           <li>捨てられる組: 1枚 / 同じランク2枚以上 / 同じスートの連番3枚以上（ジョーカーは連番の穴埋め・端に使える。実カード2枚以上）。AとKはつながらない。</li>
           <li>引くのは山札の一番上か、直前の人が捨てた組のカード（連番は両端のみ。端のジョーカーも可）。自分の捨て札からは取れない。</li>
-          <li>ヤニブ宣言で全員公開。宣言者と同点以下の人がいれば「ヤニブ返し」: 宣言者は手札+30点、返した人は0点。いなければ宣言者0点。他は手札合計を加算。</li>
+          <li>ヤニブ宣言で全員公開。宣言者より手札点が低い人がいれば「ヤニブ返し」: 宣言者は手札+30点、返した人は0点。同点は宣言者の勝ち。いなければ宣言者0点。他は手札合計を加算。</li>
           <li>累計が脱落ライン以上で脱落。最後に残った1人が勝ち。前ラウンドで0点だった人が次の先手。</li>
           <li>「次ラウンドの先手」を「加点が高かった人」にすると、前ラウンドで最も多く加点された人（同点なら宣言者から手番順で先の人）が先手になる。</li>
         </ul>
@@ -703,6 +721,7 @@
         <div class="wname" id="winner-name">—</div>
         <p class="muted small" id="winner-sub"></p>
       </div>
+      <div id="over-assaf" hidden></div>
       <h3>最終スコア</h3>
       <div class="final" id="final-list"></div>
       <div class="waiting" id="over-wait" hidden><span>ホストを待っています</span><span class="dots"></span></div>
@@ -1340,9 +1359,12 @@
     if (!r || !Array.isArray(r.entries)) return;
     $('res-round').textContent = num(r.round);
     var declarer = V.players[r.declarer] || { name: '?' };
+    var roundScreen = $('screen-round');
+    roundScreen.classList.toggle('screen-round-assaf', r.assaf != null);
     if (r.assaf != null) {
+      var av = assafValue(r);
       $('res-title').textContent = 'ヤニブ返し！';
-      $('res-sub').textContent = declarer.name + ' の宣言（' + num(r.declarerValue) + '点）に ' + (V.players[r.assaf] || { name: '?' }).name + ' が同点以下で返しました。宣言者は +30点。';
+      $('res-sub').textContent = declarer.name + ' のヤニブ ' + num(r.declarerValue) + '点 に対して、' + (V.players[r.assaf] || { name: '?' }).name + ' が ' + num(av) + '点 で返しました。宣言者は +30点。';
     } else {
       $('res-title').textContent = 'ヤニブ成功！';
       $('res-sub').textContent = declarer.name + ' が ' + num(r.declarerValue) + '点で宣言。誰も下回れませんでした。';
@@ -1387,12 +1409,39 @@
     if (mode === 'host') { try { host.nextRound(); } catch (e) { /* not at round end */ } }
   });
 
+  function assafValue(r) {
+    var en = Array.isArray(r.entries) ? r.entries[r.assaf] : null;
+    return en ? num(en.value) : 0;
+  }
+
+  // 「ヤニブ返し」バナー（ゲーム終了画面）。effect 付き。
+  function renderAssafBanner(el, V) {
+    var r = V.roundResult;
+    if (!r || r.assaf == null || !Array.isArray(r.entries)) { el.hidden = true; el.innerHTML = ''; return; }
+    var declarer = V.players[r.declarer] || { name: '?' };
+    var catcher = V.players[r.assaf] || { name: '?' };
+    var sparks = '';
+    for (var i = 0; i < 12; i++) {
+      var ang = (i / 12) * Math.PI * 2;
+      var dist = 90 + (i % 3) * 30;
+      sparks += '<span class="spark" style="--dx:' + Math.round(Math.cos(ang) * dist) + 'px; --dy:' + Math.round(Math.sin(ang) * dist) + 'px; animation-delay:' + (0.15 + (i % 4) * 0.05) + 's"></span>';
+    }
+    el.className = 'assaf-banner';
+    el.innerHTML = sparks +
+      '<div class="big">ヤニブ返し！</div>' +
+      '<div class="vs">' + esc(declarer.name) + ' のヤニブ <b class="nums">' + num(r.declarerValue) + '</b>点 に対して<br>' +
+      esc(catcher.name) + ' が <b class="nums">' + num(assafValue(r)) + '</b>点 で返した！</div>' +
+      '<div class="muted small">' + esc(declarer.name) + ' は手札 ' + num(r.declarerValue) + '点 + ペナルティ 30点</div>';
+    el.hidden = false;
+  }
+
   // ---------- game over ----------
   function renderGameOver(V) {
     var w = V.winner;
     var wp = V.players[w] || { name: '—' };
     $('winner-name').textContent = wp.name;
     $('winner-sub').textContent = num(V.round) + ' ラウンドで決着。脱落ライン ' + num(V.config.limit) + '点。';
+    renderAssafBanner($('over-assaf'), V);
     var list = $('final-list');
     list.innerHTML = '';
     var order = V.players.map(function (p, i) { return i; }).sort(function (a, b) {

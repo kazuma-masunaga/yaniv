@@ -418,14 +418,15 @@
       values[active[i]] = handValue(s.players[active[i]].hand);
     }
     var dv = values[declarer];
-    // find assaf: lowest value <= dv among others; ties -> turn order from declarer
+    // find assaf (ヤニブ返し): lowest value strictly below dv among others
+    // (equal to the declarer's value is NOT a counter); ties -> turn order from declarer
     var assaf = null;
     var best = Infinity;
     var n = s.players.length;
     for (var step = 1; step < n; step++) {
       var idx = (declarer + step) % n;
       if (s.players[idx].eliminated) continue;
-      if (values[idx] <= dv && values[idx] < best) {
+      if (values[idx] < dv && values[idx] < best) {
         best = values[idx];
         assaf = idx;
       }
