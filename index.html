@@ -425,7 +425,8 @@
   input.code-input { font-family: var(--font-display); font-size: 1.4rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 800; }
   /* ---------- Stamps (online only) ---------- */
   .tray-head { position: relative; }
-  .tray-right { display: flex; align-items: center; gap: 10px; }
+  .tray-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .sort-toggle { font-size: 0.78rem; padding: 4px 9px; white-space: nowrap; }
   #btn-stamp { white-space: nowrap; }
   #btn-stamp[aria-expanded="true"] { background: var(--accent-soft); border-color: var(--accent); }
   .stamp-picker {
@@ -739,6 +740,7 @@
           </div>
           <div class="tray-right">
             <div>合計 <span class="total nums" id="hand-total">0</span></div>
+            <button type="button" class="btn-sm sort-toggle" id="btn-sort" aria-label="手札の並び順を切り替え">並び: 数字順</button>
             <button type="button" class="btn-sm" id="btn-stamp" hidden aria-expanded="false" aria-controls="stamp-picker">😊 スタンプ</button>
           </div>
         </div>
@@ -1161,16 +1163,38 @@
   // 表示だけの並べ替えで、ゲーム状態の手札の順番は変えない。
   var RANK_ORDER = { A: 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, J: 11, Q: 12, K: 13 };
   var SUIT_ORDER = { S: 0, H: 1, D: 2, C: 3 };
+  // 並び順: 'rank' = 数字順（同じ数字が隣り合う）/ 'suit' = マーク順（同じマークの連番が隣り合う）。
+  // 端末ごとの好みなので localStorage に保存（失敗しても数字順で動く）。
+  var SORT_KEY = 'yaniv.handSort';
+  var handSort = lsGet(SORT_KEY) === 'suit' ? 'suit' : 'rank';
   function sortHandForDisplay(hand) {
     return hand.slice().sort(function (a, b) {
       var ra = RANK_ORDER[a.rank] || 99, rb = RANK_ORDER[b.rank] || 99;
-      if (ra !== rb) return ra - rb;
       var sa = SUIT_ORDER[a.suit], sb = SUIT_ORDER[b.suit];
       sa = sa == null ? 9 : sa; sb = sb == null ? 9 : sb;
-      if (sa !== sb) return sa - sb;
+      // ジョーカーはどちらの並びでも右端
+      if ((ra === 99) !== (rb === 99)) return ra === 99 ? 1 : -1;
+      if (handSort === 'suit') {
+        if (sa !== sb) return sa - sb;
+        if (ra !== rb) return ra - rb;
+      } else {
+        if (ra !== rb) return ra - rb;
+        if (sa !== sb) return sa - sb;
+      }
       return String(a.id) < String(b.id) ? -1 : 1;
     });
   }
+  function updateSortButton() {
+    var b = $('btn-sort');
+    if (b) b.textContent = '並び: ' + (handSort === 'suit' ? 'マーク順' : '数字順');
+  }
+  $('btn-sort').addEventListener('click', function () {
+    handSort = handSort === 'suit' ? 'rank' : 'suit';
+    lsSet(SORT_KEY, handSort);
+    updateSortButton();
+    render();
+  });
+  updateSortButton();
 
   function rulesLineHtml(V) {
     var c = V.config || {};
