@@ -289,6 +289,13 @@
     background: var(--surface); border: 2px solid var(--line); border-radius: 18px;
     padding: 12px; display: grid; gap: 10px;
   }
+  /* 自分の番: 手札トレイを赤枠で強調し、見出しに「あなたの番」チップ */
+  .tray.my-turn { border-color: var(--bad); border-width: 3px; box-shadow: 0 0 0 4px var(--bad-soft); animation: myTurnPulse 1.6s ease-in-out 2; }
+  @keyframes myTurnPulse { 0%,100% { box-shadow: 0 0 0 4px var(--bad-soft); } 50% { box-shadow: 0 0 0 9px var(--bad-soft); } }
+  .myturn-chip { display: inline-block; margin-right: 6px; padding: 2px 10px; border-radius: 999px; background: var(--bad); color: var(--accent-fg); font-size: 0.8rem; font-weight: 800; letter-spacing: 0.04em; }
+  /* 対局中のルール表示（控えめに1行） */
+  .rules-line { font-size: 0.78rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 0 4px; }
+  .rules-line b { color: var(--fg); font-weight: 700; }
   .tray-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .tray-head .total { font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; }
   .tray-head .total.ok { color: var(--good); }
@@ -702,6 +709,7 @@
         <span>部屋 <b class="nums" id="game-room-code">——————</b></span>
         <span class="grow small" id="game-host-note" hidden>このタブを閉じると部屋が終了します</span>
       </div>
+      <div class="rules-line nums" id="game-rules" aria-label="このゲームの設定"></div>
       <div class="opponents" id="opponents"></div>
 
       <div class="felt">
@@ -725,6 +733,7 @@
         <div class="tray-head">
           <div>
             <span class="stamp-anchor" id="my-stamp-anchor"></span>
+            <span class="myturn-chip" id="myturn-chip" hidden>あなたの番</span>
             <span class="eyebrow" id="hand-owner">あなたの手札</span>
             <span class="muted small nums" id="hand-score"></span>
           </div>
@@ -1148,6 +1157,34 @@
     return el;
   }
 
+  // 手札を表示用に並べ替える: 同じ数字が隣り合うよう A→K の順、同じ数字はスート順、ジョーカーは右端。
+  // 表示だけの並べ替えで、ゲーム状態の手札の順番は変えない。
+  var RANK_ORDER = { A: 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, J: 11, Q: 12, K: 13 };
+  var SUIT_ORDER = { S: 0, H: 1, D: 2, C: 3 };
+  function sortHandForDisplay(hand) {
+    return hand.slice().sort(function (a, b) {
+      var ra = RANK_ORDER[a.rank] || 99, rb = RANK_ORDER[b.rank] || 99;
+      if (ra !== rb) return ra - rb;
+      var sa = SUIT_ORDER[a.suit], sb = SUIT_ORDER[b.suit];
+      sa = sa == null ? 9 : sa; sb = sb == null ? 9 : sb;
+      if (sa !== sb) return sa - sb;
+      return String(a.id) < String(b.id) ? -1 : 1;
+    });
+  }
+
+  function rulesLineHtml(V) {
+    var c = V.config || {};
+    var hasCpu = V.players.some(function (p) { return p.type === 'cpu'; });
+    var items = [
+      'ヤニブ <b>' + num(E.YANIV_MAX) + '点以下</b>',
+      '脱落 <b>' + num(c.limit) + '点</b>',
+      'ジョーカー <b>' + (num(c.jokers) ? num(c.jokers) + '枚' : 'なし') + '</b>',
+      '先手 <b>' + (c.starter === 'highest' ? '加点が高い人' : '0点の人') + '</b>'
+    ];
+    if (hasCpu) items.push('CPU <b>' + ({ weak: '弱', normal: '普通', strong: '強' }[c.cpuLevel] || '普通') + '</b>');
+    return items.map(function (s) { return '<span>' + s + '</span>'; }).join('');
+  }
+
   function render() {
     var V = currentView();
     if (!V || V.phase !== 'playing') return;
@@ -1173,6 +1210,9 @@
       $('game-host-note').hidden = mode !== 'host';
     }
     $('btn-quit').textContent = mode === 'host' ? '部屋を閉じる' : mode === 'client' ? '部屋を出る' : '設定に戻る';
+
+    // このゲームの設定（全員に見える控えめな1行）
+    $('game-rules').innerHTML = rulesLineHtml(V);
 
     // opponents (everyone except the viewer)
     var opps = $('opponents');
@@ -1240,9 +1280,13 @@
       var totalEl = $('hand-total');
       totalEl.textContent = total;
       totalEl.classList.toggle('ok', total <= E.YANIV_MAX);
+      // 自分の番の強調（送信待ちの間は外す）
+      var showMyTurn = myTurn && !sending;
+      tray.classList.toggle('my-turn', showMyTurn);
+      $('myturn-chip').hidden = !showMyTurn;
       var handEl = $('hand');
       handEl.innerHTML = '';
-      vp.hand.forEach(function (c) {
+      sortHandForDisplay(vp.hand).forEach(function (c) {
         var el = cardEl(c);
         if (myTurn) {
           el.classList.add('selectable');
