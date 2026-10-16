@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>ヤニブ</title>
+<meta name="theme-color" content="#e0772f">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1d1a17">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ヤニブ">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&amp;family=Nunito:wght@400;600;700;800&amp;display=swap">
 <style>
   /* Layout: single column app. Lobby is a form; table screen is header (opponents) / felt (deck + discard) / tray (hand + actions). */
@@ -116,7 +125,8 @@
     margin: 0 auto;
     padding-left: max(16px, env(safe-area-inset-left, 0px));
     padding-right: max(16px, env(safe-area-inset-right, 0px));
-    padding-block: 16px 32px;
+    padding-top: max(16px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(32px, calc(env(safe-area-inset-bottom, 0px) + 16px));
     min-width: 0;
   }
   h1, h2, h3 { font-family: var(--font-display); line-height: 1.15; margin: 0; text-wrap: balance; }
@@ -414,6 +424,15 @@
   }
   .notice.bad { background: var(--bad-soft); border-color: var(--bad); }
   .notice .grow { flex: 1 1 auto; }
+  /* "Add to home screen" hint (lobby, shown only on Android-installable / iOS Safari) */
+  .install-hint {
+    display: flex; gap: 8px; align-items: center;
+    background: var(--surface); border: 1px dashed var(--line); border-radius: 14px;
+    padding: 8px 10px 8px 14px; margin: -4px 0 14px; font-size: 0.85rem; color: var(--muted);
+  }
+  .install-hint .grow { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .install-hint .btn-sm { flex: 0 0 auto; }
+  .install-hint .x { border-color: transparent; background: transparent; color: var(--muted); padding: 4px 8px; }
   .host-note { text-align: center; font-size: 0.78rem; color: var(--muted); margin-bottom: 8px; }
   .online-bar {
     display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
@@ -495,6 +514,12 @@
       <button type="button" data-entry="local" aria-pressed="true"><span class="ico" aria-hidden="true">📱</span><span class="lbl">この端末で遊ぶ</span><span class="small muted">CPU / パス＆プレイ</span></button>
       <button type="button" data-entry="host" aria-pressed="false"><span class="ico" aria-hidden="true">🏠</span><span class="lbl">部屋を作る</span><span class="small muted">URLを共有して対戦</span></button>
       <button type="button" data-entry="join" aria-pressed="false"><span class="ico" aria-hidden="true">🔗</span><span class="lbl">部屋に参加</span><span class="small muted">コードを入力</span></button>
+    </div>
+
+    <div class="install-hint" id="install-hint" hidden role="note">
+      <span class="grow" id="install-hint-text"></span>
+      <button type="button" class="btn-sm btn-primary" id="btn-install" hidden>ホーム画面に追加</button>
+      <button type="button" class="btn-sm x" id="btn-install-close" aria-label="この案内を閉じる">✕</button>
     </div>
 
     <!-- --- Local (Phase 1) --- -->
@@ -1732,6 +1757,15 @@
     entry = name;
     $('entries').querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.entry === name)); });
     ENTRIES.forEach(function (e) { $('panel-' + e).hidden = e !== name; });
+    // tell offline users up front that the online panels will not work (cleared once back online)
+    if (!host && !client) {
+      ['host', 'join'].forEach(function (e) {
+        var m = $(e + '-msg');
+        var why = onlineBlocker();
+        if (why) { if (e === name) m.textContent = why; }
+        else if (m.textContent === OFFLINE_TEXT || m.textContent === NOPEER_TEXT) m.textContent = '';
+      });
+    }
   }
   $('entries').addEventListener('click', function (ev) {
     var b = ev.target.closest('button');
@@ -1741,6 +1775,21 @@
   });
 
   function peerAvailable() { return typeof window.Peer !== 'undefined' && !!N; }
+  /** Online play needs PeerJS (loaded from the CDN) and a network; offline / PWA launches only have local play. */
+  var OFFLINE_TEXT = 'オンライン対戦にはインターネット接続が必要です';
+  var NOPEER_TEXT = '通信ライブラリ（PeerJS）を読み込めませんでした。ネットワークを確認して再読み込みしてください。';
+  /** null when online play can start, otherwise the reason to show. */
+  function onlineBlocker() {
+    if (navigator.onLine === false) return OFFLINE_TEXT;
+    if (!peerAvailable()) return NOPEER_TEXT;
+    return null;
+  }
+  window.addEventListener('online', function () {
+    ['host-msg', 'join-msg'].forEach(function (id) {
+      var m = $(id);
+      if (m.textContent === OFFLINE_TEXT) m.textContent = '';
+    });
+  });
 
   function shareUrl(code) {
     return location.origin + location.pathname + '?room=' + code;
@@ -1857,8 +1906,9 @@
 
   $('btn-host-create').addEventListener('click', function () {
     var name = $('host-name').value.trim().slice(0, 12);
+    var hb = onlineBlocker();
+    if (hb) { $('host-msg').textContent = hb; return; }
     if (!name) { $('host-msg').textContent = '名前を入力してください'; return; }
-    if (!peerAvailable()) { $('host-msg').textContent = '通信ライブラリ（PeerJS）を読み込めませんでした。ネットワークを確認して再読み込みしてください。'; return; }
     lsSet(NAME_KEY, name);
     $('host-msg').textContent = '部屋を作成中…';
     $('btn-host-create').disabled = true;
@@ -1972,9 +2022,10 @@
   $('btn-join').addEventListener('click', function () {
     var code = N ? N.normalizeCode($('join-code').value) : '';
     var name = $('join-name').value.trim().slice(0, 12);
+    var jb = onlineBlocker();
+    if (jb) { $('join-msg').textContent = jb; return; }
     if (!N || !N.isValidCode(code)) { $('join-msg').textContent = '部屋コードは6文字です'; return; }
     if (!name) { $('join-msg').textContent = '名前を入力してください'; return; }
-    if (!peerAvailable()) { $('join-msg').textContent = '通信ライブラリ（PeerJS）を読み込めませんでした。ネットワークを確認して再読み込みしてください。'; return; }
     lsSet(NAME_KEY, name);
     $('join-msg').textContent = '接続中…';
     $('btn-join').disabled = true;
@@ -2077,6 +2128,76 @@
     setEntry('local');
   }
   show('screen-lobby');
+})();
+</script>
+<script>
+/* PWA: service worker (offline local play) + "add to home screen" hint in the lobby. */
+(function () {
+  'use strict';
+  var HINT_KEY = 'yaniv.installHint.dismissed';
+  var hint = document.getElementById('install-hint');
+  var text = document.getElementById('install-hint-text');
+  var btn = document.getElementById('btn-install');
+  var closeBtn = document.getElementById('btn-install-close');
+  var deferred = null;
+
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    window.addEventListener('load', function () {
+      try { navigator.serviceWorker.register('./sw.js').catch(function () { /* ignore */ }); } catch (e) { /* ignore */ }
+    });
+  }
+
+  function isStandalone() {
+    try { if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true; } catch (e) { /* ignore */ }
+    return navigator.standalone === true;
+  }
+  function dismissed() { try { return localStorage.getItem(HINT_KEY) === '1'; } catch (e) { return false; } }
+  function remember() { try { localStorage.setItem(HINT_KEY, '1'); } catch (e) { /* ignore */ } }
+  var UA = navigator.userAgent || '';
+  var IS_IOS = /iPhone|iPad|iPod/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS reports as Mac
+  // LINE / Facebook / Instagram / Google app in-app browsers cannot add to the home screen
+  var IN_APP = /Line\/|FBAN|FBAV|Instagram|GSA\//.test(UA);
+  function isIosSafari() {
+    return IS_IOS && !IN_APP && /Safari\//.test(UA) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(UA);
+  }
+  function isIosInApp() { return IS_IOS && IN_APP; }
+  function isCoarse() { try { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); } catch (e) { return false; } }
+  function hide() { hint.hidden = true; }
+  if (!hint || isStandalone() || dismissed()) return;
+
+  if (isIosSafari()) {
+    text.textContent = 'アプリのように使うには：共有ボタン → 「ホーム画面に追加」';
+    btn.hidden = true;
+    hint.hidden = false;
+  } else if (isIosInApp()) {
+    text.textContent = 'Safari で開くとホーム画面に追加できます';
+    btn.hidden = true;
+    hint.hidden = false;
+  }
+  window.addEventListener('beforeinstallprompt', function (ev) {
+    ev.preventDefault();
+    deferred = ev;
+    if (dismissed() || isStandalone()) return;
+    var coarse = isCoarse();
+    text.textContent = coarse
+      ? 'ホーム画面に追加すると全画面で遊べます（オフラインでも1台で遊べます）'
+      : 'アプリとしてインストールすると別ウィンドウで遊べます（オフラインでも1台で遊べます）';
+    btn.textContent = coarse ? 'ホーム画面に追加' : 'アプリとしてインストール';
+    btn.hidden = false;
+    hint.hidden = false;
+  });
+  btn.addEventListener('click', function () {
+    if (!deferred) { hide(); return; }
+    var ev = deferred;
+    deferred = null;
+    try {
+      ev.prompt();
+      Promise.resolve(ev.userChoice).then(function (c) { if (c && c.outcome === 'accepted') hide(); }, function () { /* ignore */ });
+    } catch (e) { /* ignore */ }
+    btn.hidden = true;
+  });
+  closeBtn.addEventListener('click', function () { remember(); hide(); });
+  window.addEventListener('appinstalled', function () { remember(); hide(); });
 })();
 </script>
 </body>
