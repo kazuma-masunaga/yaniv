@@ -362,7 +362,10 @@
   .winner-card .trophy { font-size: 2.4rem; }
   .winner-card .wname { font-family: var(--font-display); font-size: 1.8rem; font-weight: 800; }
   .final { display: grid; gap: 6px; }
-  .final .frow { display: flex; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 10px; background: var(--surface); border: 2px solid var(--line); }
+  .final .frow { display: grid; gap: 8px; padding: 8px 12px; border-radius: 10px; background: var(--surface); border: 2px solid var(--line); }
+  .final .frow-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .final .frow-hand { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; min-width: 0; }
+  .final .frow-hand .cards { display: flex; gap: 6px; flex-wrap: wrap; }
   .final .frow.win { border-color: var(--accent); }
 
   @media (max-width: 460px) {
@@ -810,7 +813,7 @@
       <div class="final" id="final-list"></div>
       <div class="waiting" id="over-wait" hidden><span>ホストを待っています</span><span class="dots"></span></div>
       <div class="row">
-        <button type="button" class="btn-primary" id="btn-again" style="flex:1;">もう一度（同じ設定）</button>
+        <button type="button" class="btn-primary" id="btn-again" style="flex:1;" aria-label="同じ設定でもう一度">もう一度遊ぶ</button>
         <button type="button" id="btn-lobby" style="flex:1;">設定に戻る</button>
       </div>
     </div>
@@ -1713,7 +1716,28 @@
       var added = (en && en.wasActive !== false) ? num(en.added) : null;
       var d = document.createElement('div');
       d.className = 'frow nums' + (i === w ? ' win' : '');
-      d.innerHTML = '<span><b>' + esc(p.name) + '</b>' + (i === w ? ' <span class="badge declarer">勝者</span>' : ' <span class="badge out">脱落</span>') + '</span><span><b>' + num(p.score) + '</b> 点' + (added != null ? '<span class="muted small">（+' + added + '）</span>' : '') + '</span>';
+      var roleBadge = '';
+      if (en && en.role === 'yaniv') roleBadge = ' <span class="badge yaniv">ヤニブ</span>';
+      if (en && en.role === 'assaf') roleBadge = ' <span class="badge assaf">ヤニブ返し</span>';
+      if (en && en.role === 'caught') roleBadge = ' <span class="badge caught">返された</span>';
+      var head = document.createElement('div');
+      head.className = 'frow-head';
+      head.innerHTML = '<span><b>' + esc(p.name) + '</b>' + (i === w ? ' <span class="badge declarer">勝者</span>' : ' <span class="badge out">脱落</span>') + roleBadge + '</span><span><b>' + num(p.score) + '</b> 点' + (added != null ? '<span class="muted small">（+' + added + '）</span>' : '') + '</span>';
+      d.appendChild(head);
+      // 最終ラウンドの手札（そのラウンドに参加していた人のみ）
+      if (en && en.wasActive !== false && Array.isArray(en.hand)) {
+        var row = document.createElement('div');
+        row.className = 'frow-hand';
+        var cards = document.createElement('div');
+        cards.className = 'cards';
+        sortHandForDisplay(en.hand).forEach(function (c) { cards.appendChild(cardEl(c, { small: true })); });
+        row.appendChild(cards);
+        var hv = document.createElement('span');
+        hv.className = 'muted small';
+        hv.textContent = '手札 ' + num(en.value) + '点';
+        row.appendChild(hv);
+        d.appendChild(row);
+      }
       list.appendChild(d);
     });
     $('btn-again').hidden = mode === 'client';
