@@ -72,19 +72,57 @@ function assertViewIsSafe(view, seat, hostState) {
 }
 
 // ---------- tests ----------
-test('room code: 6 chars without ambiguous letters; retries on unavailable-id', async () => {
+test('room code: 4 digits (leading zeros kept); app-prefixed peer id; retries on unavailable-id', async () => {
   const hub = N.createMemoryHub();
   for (let i = 0; i < 200; i++) {
     const code = N.randomCode();
-    assert.match(code, /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/);
+    assert.match(code, /^\d{4}$/);
   }
-  const a = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'A', codeGen: seqCodes(['AAAAAA']) });
-  assert.equal(await a.open(), 'AAAAAA');
-  const b = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'B', codeGen: seqCodes(['AAAAAA', 'AAAAAA', 'BBBBBB']) });
-  assert.equal(await b.open(), 'BBBBBB');
-  const c = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'C', codeGen: seqCodes(['AAAAAA']) });
+  assert.equal(N.CODE_LEN, 4);
+  // leading zero: rnd() -> 0 gives "0000"; rnd just under 1 gives "9999"
+  assert.equal(N.randomCode(() => 0), '0000');
+  assert.equal(N.randomCode(() => 0.99999), '9999');
+  const a = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'A', codeGen: seqCodes(['0042']) });
+  assert.equal(await a.open(), '0042');
+  assert.ok(hub.has('yaniv-kmz7-0042'), 'peer id uses the app-specific prefix');
+  assert.ok(!hub.has('yaniv-0042'));
+  const b = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'B', codeGen: seqCodes(['0042', '0042', '1234']) });
+  assert.equal(await b.open(), '1234');
+  // gives up after MAX_CODE_ATTEMPTS (8) collisions
+  let calls = 0;
+  const c = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'C', codeGen: () => { calls++; return '0042'; } });
   await assert.rejects(c.open(), /taken/);
-  a.close(); b.close(); c.close();
+  assert.equal(calls, 8);
+  assert.equal(N.MAX_CODE_ATTEMPTS, 8);
+  // an invalid code from codeGen falls back to a random 4-digit code
+  const d = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'D', codeGen: seqCodes(['ABC234']) });
+  assert.match(await d.open(), /^\d{4}$/);
+  a.close(); b.close(); c.close(); d.close();
+});
+
+test('room code: full-width digits accepted, old 6-char codes rejected', async () => {
+  assert.equal(N.normalizeCode('\uFF10\uFF11\uFF12\uFF13'), '0123');
+  assert.equal(N.normalizeCode(' 12-34 '), '1234');
+  assert.equal(N.normalizeCode('１２\u3000３４'), '1234');
+  assert.equal(N.sanitizeCode('０９８７'), '0987');
+  for (const bad of ['ABC234', 'AB2345', '12345', '123', '12a4', '', null, 1234, 'yaniv-1234']) {
+    assert.equal(N.sanitizeCode(bad), '', 'rejects ' + bad);
+  }
+  assert.equal(N.isValidCode('1234'), true);
+  assert.equal(N.isValidCode('0000'), true);
+  assert.equal(N.isValidCode('ABCDEF'), false);
+  assert.equal(N.isValidCode('１２３４'), false, 'isValidCode expects the normalized form');
+  // a client built with an old-style code never connects
+  const hub = N.createMemoryHub();
+  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', codeGen: seqCodes(['2345']) });
+  await host.open();
+  const old = N.createClient({ transport: hub.createTransport(), roomCode: 'AB2345', name: 'X', connectTimeoutMs: 0, autoReconnect: false });
+  await assert.rejects(old.connect());
+  // full-width input reaches the right room
+  const fw = await joinClient(hub, '２３４５', 'F');
+  assert.equal(fw.info.roomCode, '2345');
+  assert.equal(fw.info.seat, 1);
+  fw.leave(); old.leave(); host.close();
 });
 
 test('create room -> two join -> lobby broadcast has seats, names, connection state', async () => {
@@ -294,10 +332,10 @@ test('reconnect with seatToken returns to the same seat and gets the latest view
 
 test('client auto-reconnects with backoff after the connection drops', async () => {
   const hub = N.createMemoryHub();
-  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['RRRRRR']) });
+  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['2222']) });
   await host.open();
   const ct = hub.createTransport();
-  const a = N.createClient({ transport: ct, roomCode: 'RRRRRR', name: 'A', connectTimeoutMs: 0, backoff: [5, 10] });
+  const a = N.createClient({ transport: ct, roomCode: '2222', name: 'A', connectTimeoutMs: 0, backoff: [5, 10] });
   const disconnects = [], joined = [];
   a.onDisconnect((d) => disconnects.push(d));
   a.onJoined((j) => joined.push(j));
@@ -360,14 +398,14 @@ test('replaceWithCpu: the seat becomes a CPU and the CPU plays that seat', async
 
 test('host survives unknown / malformed messages; client survives malformed host messages', async () => {
   const hub = N.createMemoryHub();
-  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['QQQQQQ']) });
+  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['3333']) });
   await host.open();
   const errors = [];
   host.onError((e) => errors.push(e));
   // raw connection speaking garbage
   const t = hub.createTransport();
   await t.open();
-  const raw = t.connect(N.peerIdFor('QQQQQQ'));
+  const raw = t.connect(N.peerIdFor('3333'));
   const got = [];
   raw.onMessage((m) => got.push(m));
   // bad joins close the connection (reject), so send those last
@@ -380,15 +418,15 @@ test('host survives unknown / malformed messages; client survives malformed host
   assert.ok(got.some((m) => m && m.t === 'pong'), 'ping answered');
   assert.ok(got.some((m) => m && m.t === 'reject'), 'bad join rejected');
   // host still works: a real client can join
-  const c = await joinClient(hub, 'QQQQQQ', 'Real');
+  const c = await joinClient(hub, '3333', 'Real');
   assert.equal(c.info.seat, 1);
   // now feed the client garbage from a fake host
   const fakeHub = N.createMemoryHub();
   const fakeHostT = fakeHub.createTransport();
-  await fakeHostT.open(N.peerIdFor('FAKE22'));
+  await fakeHostT.open(N.peerIdFor('4422'));
   let hostConn = null;
   fakeHostT.onConnection((cn) => { hostConn = cn; cn.onMessage(() => {}); });
-  const victim = N.createClient({ transport: fakeHub.createTransport(), roomCode: 'FAKE22', name: 'V', connectTimeoutMs: 0, backoff: [1] });
+  const victim = N.createClient({ transport: fakeHub.createTransport(), roomCode: '4422', name: 'V', connectTimeoutMs: 0, backoff: [1] });
   const vViews = [], vLobbies = [], vErrors = [];
   victim.onView((v) => vViews.push(v)); victim.onLobby((l) => vLobbies.push(l)); victim.onError((e) => vErrors.push(e));
   victim.connect().catch(() => {});
@@ -404,7 +442,7 @@ test('host survives unknown / malformed messages; client survives malformed host
   assert.equal(vLobbies.length, 0, 'no invalid lobby accepted');
   // valid lobby still accepted afterwards -> client still alive
   hostConn.send({ t: 'lobby', seats: [{ name: 'H', type: 'human', connected: true, isHost: true }, { name: '<b>x</b>', type: 'human', connected: true }], config: { jokers: 9 } });
-  hostConn.send({ t: 'joined', seat: 1, seatToken: 'abcdefghijklmnop', roomCode: 'FAKE22' });
+  hostConn.send({ t: 'joined', seat: 1, seatToken: 'abcdefghijklmnop', roomCode: '4422' });
   await fakeHub.settle();
   assert.equal(vLobbies.length, 1);
   assert.equal(vLobbies[0].config.jokers, 2, 'bad config value falls back');
@@ -513,15 +551,15 @@ test('setConfig: starter propagates to lobby broadcasts, createGame config and c
 test('client view validation: config.starter must be zero/highest when present', async () => {
   const hub = N.createMemoryHub();
   const ht = hub.createTransport();
-  await ht.open(N.peerIdFor('SSSSSS'));
+  await ht.open(N.peerIdFor('5555'));
   let hc = null;
   ht.onConnection((cn) => { hc = cn; cn.onMessage(() => {}); });
-  const v = N.createClient({ transport: hub.createTransport(), roomCode: 'SSSSSS', name: 'V', connectTimeoutMs: 0, backoff: [1] });
+  const v = N.createClient({ transport: hub.createTransport(), roomCode: '5555', name: 'V', connectTimeoutMs: 0, backoff: [1] });
   const views = [];
   v.onView((x) => views.push(x));
   v.connect().catch(() => {});
   await hub.settle();
-  hc.send({ t: 'joined', seat: 0, seatToken: 'abcdefghijklmnop', roomCode: 'SSSSSS' });
+  hc.send({ t: 'joined', seat: 0, seatToken: 'abcdefghijklmnop', roomCode: '5555' });
   const base = () => ({ phase: 'playing', seat: 0, players: [{ name: 'a', handCount: 1, score: 0, hand: [] }, { name: 'b', handCount: 1, score: 0 }], currentPlayer: 0, round: 1, deckCount: 1, discardPile: [], legalMoves: [], takeable: [], config: { limit: 101 } });
   let x = base(); x.config.starter = '<b>'; hc.send({ t: 'view', view: x });
   await hub.settle();
@@ -604,10 +642,10 @@ function flakyTransport(inner) {
 
 test('#3 reconnect loop survives connect() returning undefined / throwing and keeps retrying with backoff', async () => {
   const hub = N.createMemoryHub();
-  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['RCRCRC']) });
+  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['6060']) });
   await host.open();
   const ft = flakyTransport(hub.createTransport());
-  const a = N.createClient({ transport: ft, roomCode: 'RCRCRC', name: 'A', connectTimeoutMs: 0, backoff: [3, 3] });
+  const a = N.createClient({ transport: ft, roomCode: '6060', name: 'A', connectTimeoutMs: 0, backoff: [3, 3] });
   const disconnects = [], joined = [];
   a.onDisconnect((d) => disconnects.push(d));
   a.onJoined((j) => joined.push(j));
@@ -639,12 +677,12 @@ test('#3 reconnect loop survives connect() returning undefined / throwing and ke
 
 test('#3 reconnect loop survives transport.open() failing (open-failed path)', async () => {
   const hub = N.createMemoryHub();
-  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['OPOPOP']) });
+  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['7070']) });
   await host.open();
   // first transport joins, then is closed entirely (so ensureOpen must re-open); the re-open fails for a while
   const innerT = hub.createTransport();
   const ft = flakyTransport(innerT);
-  const a = N.createClient({ transport: ft, roomCode: 'OPOPOP', name: 'A', connectTimeoutMs: 0, backoff: [3, 3] });
+  const a = N.createClient({ transport: ft, roomCode: '7070', name: 'A', connectTimeoutMs: 0, backoff: [3, 3] });
   const disconnects = [], joined = [];
   a.onDisconnect((d) => disconnects.push(d));
   a.onJoined((j) => joined.push(j));
@@ -666,7 +704,7 @@ test('#3 reconnect loop survives transport.open() failing (open-failed path)', a
   // a brand-new client whose open() fails reports connect-failed and rejects (no infinite loop before first join)
   const ft2 = flakyTransport(hub.createTransport());
   ft2.failOpen = true;
-  const b = N.createClient({ transport: ft2, roomCode: 'OPOPOP', name: 'B', connectTimeoutMs: 0, backoff: [1] });
+  const b = N.createClient({ transport: ft2, roomCode: '7070', name: 'B', connectTimeoutMs: 0, backoff: [1] });
   const errs = [];
   b.onError((e) => errs.push(e));
   await assert.rejects(b.connect(), /open failed/);
@@ -676,12 +714,12 @@ test('#3 reconnect loop survives transport.open() failing (open-failed path)', a
 
 test('#4 second tab with the same seatToken takes the seat; the old tab gets closed:replaced and stops reconnecting', async () => {
   const hub = N.createMemoryHub();
-  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['TTTTTT']) });
+  const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['8888']) });
   await host.open();
-  const tab1 = await joinClient(hub, 'TTTTTT', 'A', { backoff: [2, 2] });
+  const tab1 = await joinClient(hub, '8888', 'A', { backoff: [2, 2] });
   const token = tab1.info.seatToken;
   // without the fix the two tabs steal the seat from each other forever; bound the wait so that shows as a failure
-  const tab2 = N.createClient({ transport: hub.createTransport(), roomCode: 'TTTTTT', name: 'A', seatToken: token, connectTimeoutMs: 0, backoff: [2, 2] });
+  const tab2 = N.createClient({ transport: hub.createTransport(), roomCode: '8888', name: 'A', seatToken: token, connectTimeoutMs: 0, backoff: [2, 2] });
   tab2.views = []; tab2.closed = []; const tab2joined = [];
   tab2.onView((v) => tab2.views.push(v)); tab2.onClosed((x) => tab2.closed.push(x)); tab2.onJoined((j) => tab2joined.push(j));
   let tab1Joins = 1; tab1.onJoined(() => tab1Joins++); tab1.joinCount = () => tab1Joins;
@@ -722,15 +760,15 @@ test('#4 second tab with the same seatToken takes the seat; the old tab gets clo
 test('#5 client rejects views with malformed roundResult / config.limit', async () => {
   const hub = N.createMemoryHub();
   const ht = hub.createTransport();
-  await ht.open(N.peerIdFor('VVVVVV'));
+  await ht.open(N.peerIdFor('9999'));
   let hc = null;
   ht.onConnection((cn) => { hc = cn; cn.onMessage(() => {}); });
-  const v = N.createClient({ transport: hub.createTransport(), roomCode: 'VVVVVV', name: 'V', connectTimeoutMs: 0, backoff: [1] });
+  const v = N.createClient({ transport: hub.createTransport(), roomCode: '9999', name: 'V', connectTimeoutMs: 0, backoff: [1] });
   const views = [];
   v.onView((x) => views.push(x));
   v.connect().catch(() => {});
   await hub.settle();
-  hc.send({ t: 'joined', seat: 0, seatToken: 'abcdefghijklmnop', roomCode: 'VVVVVV' });
+  hc.send({ t: 'joined', seat: 0, seatToken: 'abcdefghijklmnop', roomCode: '9999' });
   const base = () => ({ phase: 'playing', seat: 0, players: [{ name: 'a', handCount: 1, score: 0, hand: [] }, { name: 'b', handCount: 1, score: 0 }], currentPlayer: 0, round: 1, deckCount: 1, discardPile: [], legalMoves: [], takeable: [], config: { limit: 101 } });
   const bad = [];
   let x = base(); x.config.limit = '<img>'; bad.push(x);
@@ -962,15 +1000,15 @@ test('stamps: malformed stamp messages do not break host or client', async () =>
   // fake host feeding garbage stamps to a client
   const fakeHub = N.createMemoryHub();
   const ft = fakeHub.createTransport();
-  await ft.open(N.peerIdFor('STAMP1'));
+  await ft.open(N.peerIdFor('0001'));
   let hc = null;
   ft.onConnection((cn) => { hc = cn; cn.onMessage(() => {}); });
-  const v = N.createClient({ transport: fakeHub.createTransport(), roomCode: 'STAMP1', name: 'V', connectTimeoutMs: 0, backoff: [1] });
+  const v = N.createClient({ transport: fakeHub.createTransport(), roomCode: '0001', name: 'V', connectTimeoutMs: 0, backoff: [1] });
   const stamps = [];
   v.onStamp((s) => stamps.push(s));
   v.connect().catch(() => {});
   await fakeHub.settle();
-  hc.send({ t: 'joined', seat: 0, seatToken: 'abcdefghijklmnop', roomCode: 'STAMP1' });
+  hc.send({ t: 'joined', seat: 0, seatToken: 'abcdefghijklmnop', roomCode: '0001' });
   const bad = [{ t: 'stamp' }, { t: 'stamp', seat: 1 }, { t: 'stamp', seat: 1, id: 'nope' }, { t: 'stamp', seat: 'x', id: 'joy' }, { t: 'stamp', seat: 5, id: 'joy' },
     { t: 'stamp', seat: -1, id: 'joy' }, { t: 'stamp', seat: 1.5, id: 'joy' }, { t: 'stamp', seat: 1, id: '<script>' }];
   for (const b of bad) hc.send(b);
@@ -983,6 +1021,32 @@ test('stamps: malformed stamp messages do not break host or client', async () =>
   host.close();
 });
 
+test('parseCodeInput (join field): share URLs, full-width, partial input, old codes', () => {
+  const P = N.parseCodeInput;
+  // typing: 0-3 digits are fine, 4 digits complete
+  assert.deepEqual(P(''), { value: '', code: '', error: false, fromUrl: false });
+  assert.deepEqual(P('12'), { value: '12', code: '', error: false, fromUrl: false });
+  assert.deepEqual(P('0042'), { value: '0042', code: '0042', error: false, fromUrl: false });
+  // paste with separators / full-width
+  assert.equal(P('12-34').code, '1234');
+  assert.equal(P(' 12 34 ').code, '1234');
+  assert.equal(P('１２３４').code, '1234');
+  assert.equal(P('１２３４').value, '1234');
+  // share URL (any text containing room=dddd), full-width digits too
+  const url = P('https://kazuma-masunaga.github.io/yaniv/?room=0427');
+  assert.deepEqual(url, { value: '0427', code: '0427', error: false, fromUrl: true });
+  assert.equal(P('参加してね https://x.example/?a=1&room=9876#top').code, '9876');
+  assert.equal(P('?room=０４２７').code, '0427');
+  // old / bad codes: error, digits are NOT extracted
+  for (const bad of ['AB2345', 'ABC234', 'abcd', '12a4', '12345', '234567', 'https://x.example/?room=ABC234', '?room=12345']) {
+    const r = P(bad);
+    assert.equal(r.error, true, bad);
+    assert.equal(r.code, '', bad);
+    assert.equal(r.value, bad, 'raw text kept so the user sees it: ' + bad);
+  }
+  assert.equal(P(null).error, false);
+});
+
 test('normalizeMove / sanitizeName / normalizeCode', () => {
   assert.deepEqual(N.normalizeMove({ type: 'yaniv', junk: 1 }), { type: 'yaniv' });
   assert.deepEqual(N.normalizeMove({ type: 'play', discard: ['5S'], draw: 'deck' }), { type: 'play', discard: ['5S'], draw: 'deck' });
@@ -993,8 +1057,9 @@ test('normalizeMove / sanitizeName / normalizeCode', () => {
   assert.equal(N.sanitizeName('  abcdefghijklmnop '), 'abcdefghijkl');
   assert.equal(N.sanitizeName(12), '');
   assert.equal(N.sanitizeName('a\u0000b'), 'ab');
-  assert.equal(N.normalizeCode('ab-cd ef'), 'ABCDEF');
-  assert.equal(N.normalizeCode('abcdefgh'), 'ABCDEF');
-  assert.equal(N.isValidCode('ABC12'), false);
-  assert.equal(N.peerIdFor('ABC123'), 'yaniv-ABC123');
+  assert.equal(N.normalizeCode('12 34'), '1234');
+  assert.equal(N.normalizeCode('abcdefgh'), 'abcdefgh', 'letters are kept so the code stays invalid');
+  assert.equal(N.isValidCode('123'), false);
+  assert.equal(N.peerIdFor('0123'), 'yaniv-kmz7-0123');
+  assert.equal(N.PEER_PREFIX, 'yaniv-kmz7-');
 });

@@ -26,13 +26,15 @@
   'use strict';
 
   var PROTO = 1;
-  var CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O/1/I/L
+  var CODE_CHARS = '0123456789'; // room code = 4 digits ("0000".."9999")
   var TOKEN_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  var CODE_LEN = 6;
+  var CODE_LEN = 4;
+  var CODE_RE = /^\d{4}$/;
   var TOKEN_LEN = 16;
   var NAME_MAX = 12;
-  var MAX_CODE_ATTEMPTS = 5;
-  var PEER_PREFIX = 'yaniv-';
+  var MAX_CODE_ATTEMPTS = 8;
+  // App-specific prefix on the public PeerJS server: 4 digits alone would collide with other apps easily.
+  var PEER_PREFIX = 'yaniv-kmz7-';
   var STAMP_INTERVAL_MS = 1500;
 
   /** Stamps (online only). Fixed ids -> emoji/label; the UI renders only these strings. */
@@ -77,12 +79,43 @@
   function randomCode(rnd) { return randomString(CODE_CHARS, CODE_LEN, rnd); }
   function randomToken(rnd) { return randomString(TOKEN_CHARS, TOKEN_LEN, rnd); }
 
+  /**
+   * Normalize user/URL input: full-width digits -> half-width, drop spaces/hyphens.
+   * Does NOT strip other characters or truncate, so an old 6-char code ("ABC234") stays invalid
+   * instead of silently turning into a different 4-digit room.
+   */
   function normalizeCode(code) {
     if (typeof code !== 'string') return '';
-    return code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LEN);
+    return code
+      .replace(/[\uFF10-\uFF19]/g, function (ch) { return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); })
+      .replace(/[\s\u3000\-\u2010-\u2015\u2212\u30FC\uFF0D]/g, '')
+      .slice(0, 32);
   }
   function isValidCode(code) {
-    return typeof code === 'string' && code.length === CODE_LEN && /^[A-Z0-9]+$/.test(code);
+    return typeof code === 'string' && CODE_RE.test(code);
+  }
+  /** normalizeCode + validate; returns '' unless the result is exactly 4 digits. */
+  function sanitizeCode(code) {
+    var c = normalizeCode(code);
+    return isValidCode(c) ? c : '';
+  }
+  /**
+   * Parse what the user typed/pasted into the join field (pure; UI uses it, tests cover it).
+   * Returns { value, code, error, fromUrl }:
+   *   - a pasted share URL (or any text containing "room=1234", full-width digits OK) -> its 4 digits
+   *   - digits only (after normalizeCode): 0-3 digits = still typing (no error), 4 = complete
+   *   - anything else (letters such as an old "AB2345", 5+ digits) -> error; digits are NOT extracted,
+   *     so an old code can never silently turn into a different 4-digit room.
+   * value: what the input should show (normalized when OK, the raw text when in error).
+   */
+  function parseCodeInput(raw) {
+    var str = typeof raw === 'string' ? raw : '';
+    var half = str.replace(/[\uFF10-\uFF19]/g, function (ch) { return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); });
+    var m = /room[=\uFF1D](\d{4})(?!\d)/i.exec(half);
+    if (m) return { value: m[1], code: m[1], error: false, fromUrl: true };
+    var n = String(half).replace(/[\s\u3000\-\u2010-\u2015\u2212\u30FC\uFF0D]/g, '');
+    if (/^\d{0,4}$/.test(n)) return { value: n, code: n.length === CODE_LEN ? n : '', error: false, fromUrl: false };
+    return { value: str, code: '', error: true, fromUrl: false };
   }
   function peerIdFor(code) { return PEER_PREFIX + code; }
 
@@ -900,7 +933,7 @@
       return {
         seats: seats,
         inGame: !!msg.inGame,
-        roomCode: normalizeCode(msg.roomCode) || roomCode,
+        roomCode: sanitizeCode(msg.roomCode) || roomCode,
         config: {
           jokers: [0, 1, 2].indexOf(cfg.jokers) >= 0 ? cfg.jokers : 2,
           limit: [31, 51, 71, 101].indexOf(cfg.limit) >= 0 ? cfg.limit : 101,
@@ -953,7 +986,7 @@
             clearJoinTimer();
             client.seat = msg.seat;
             client.seatToken = seatToken = msg.seatToken;
-            if (typeof msg.roomCode === 'string') client.roomCode = normalizeCode(msg.roomCode) || roomCode;
+            if (typeof msg.roomCode === 'string') client.roomCode = sanitizeCode(msg.roomCode) || roomCode;
             everJoined = true;
             attempt = 0;
             var info = { seat: client.seat, seatToken: seatToken, roomCode: client.roomCode };
@@ -1121,6 +1154,8 @@
   return {
     PROTO: PROTO,
     CODE_LEN: CODE_LEN,
+    PEER_PREFIX: PEER_PREFIX,
+    MAX_CODE_ATTEMPTS: MAX_CODE_ATTEMPTS,
     NAME_MAX: NAME_MAX,
     STAMPS: STAMPS,
     STAMP_INTERVAL_MS: STAMP_INTERVAL_MS,
@@ -1129,6 +1164,8 @@
     randomToken: randomToken,
     normalizeCode: normalizeCode,
     isValidCode: isValidCode,
+    sanitizeCode: sanitizeCode,
+    parseCodeInput: parseCodeInput,
     peerIdFor: peerIdFor,
     sanitizeName: sanitizeName,
     normalizeMove: normalizeMove,

@@ -405,9 +405,11 @@
   .entries button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
   .entries button[aria-pressed="true"] .muted { color: inherit; opacity: 0.85; }
   .roomcode { display: grid; gap: 4px; justify-items: center; text-align: center; padding: 12px; border-radius: 14px; background: var(--surface-2); }
-  .roomcode .code { font-family: var(--font-display); font-size: 2.6rem; font-weight: 800; letter-spacing: 0.18em; line-height: 1.1; user-select: all; }
+  /* 4桁なので大きめ＋広い字間。字間は末尾にも付くので padding-left で中央をそろえる */
+  .roomcode .code { font-family: var(--font-display); font-size: 3rem; font-weight: 800; letter-spacing: 0.28em; padding-left: 0.28em; line-height: 1.1; user-select: all; }
   .share { display: flex; gap: 8px; align-items: center; }
   .share input { flex: 1 1 auto; font-size: 0.85rem; }
+  .share .btn-copy { flex: 0 0 auto; white-space: nowrap; min-height: 40px; }
   .seat-list { display: grid; gap: 6px; }
   .seat-row {
     display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 12px;
@@ -417,6 +419,7 @@
   .seat-row .nm { flex: 1 1 auto; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .seat-row.empty .nm { color: var(--muted); font-weight: 600; }
   .seat-row .btn-sm { flex: 0 0 auto; }
+  .seat-row .btn-kick { min-height: 40px; }
   .badge.on { background: var(--good-soft); color: var(--good); }
   .badge.off { background: var(--bad-soft); color: var(--bad); }
   .badge.cpu { background: var(--surface); color: var(--muted); border: 1px solid var(--line); }
@@ -444,7 +447,8 @@
   .online-bar .grow { flex: 1 1 auto; }
   /* 接続状態バッジは累計の下に置く（スマホ幅で累計に重ならないように） */
   .opp .conn { justify-self: start; margin-top: 2px; }
-  input.code-input { font-family: var(--font-display); font-size: 1.4rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 800; }
+  input.code-input { font-family: var(--font-display); font-size: 1.6rem; letter-spacing: 0.3em; font-weight: 800; }
+  input.code-input::placeholder { color: var(--muted); opacity: 0.5; }
   /* ---------- Stamps (online only) ---------- */
   .tray-head { position: relative; }
   .tray-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -493,7 +497,101 @@
     .entries { grid-template-columns: 1fr; }
     .entries button { grid-template-columns: auto 1fr; justify-items: start; text-align: left; column-gap: 10px; }
     .entries button .ico { grid-row: 1 / span 2; }
-    .roomcode .code { font-size: 2.1rem; }
+    .roomcode .code { font-size: 2.6rem; }
+  }
+  /* ---------- 対局画面: スマホで1画面に収める ----------
+     PC 幅はそのまま。600px 以下で要素を詰め、さらに高さが足りない端末（760px 以下）で段階的に詰める。
+     100dvh などで固定はせず、自然な高さで収まるようにする（キーボード・回転で壊れないように）。 */
+  .game-meta { display: contents; }
+  .online-bar .note-short { display: none; }
+  @media (max-width: 600px) {
+    .app {
+      padding-top: max(8px, env(safe-area-inset-top, 0px));
+      padding-bottom: max(12px, calc(env(safe-area-inset-bottom, 0px) + 4px));
+    }
+    .game { gap: 8px; }
+    /* 上部: 「ラウンド n」と「○○の番」を1行に */
+    .topbar { flex-wrap: nowrap; gap: 8px; }
+    .topbar-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+    .topbar-title .eyebrow { flex: 0 0 auto; }
+    .topbar-title h2 { font-size: 1.1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    #btn-quit { flex: 0 0 auto; padding: 4px 10px; font-size: 0.8rem; min-height: 40px; }
+    /* 部屋コード＋ルールを小さな1〜2行に */
+    .game-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; font-size: 0.72rem; line-height: 1.45; }
+    .online-bar { background: none; border: 0; border-radius: 0; padding: 0; gap: 6px; flex-wrap: nowrap; font-size: inherit; }
+    .online-bar .room b { color: var(--fg); }
+    .online-bar .grow { flex: 0 1 auto; font-size: inherit; }
+    .online-bar .note-long { display: none; }
+    .online-bar .note-short { display: inline; }
+    .rules-line { font-size: inherit; padding: 0; gap: 0 8px; }
+    /* 相手: 2列グリッド・2行（名前／手札・累計・接続） */
+    .opponents { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+    .opp:last-child:nth-child(odd) { grid-column: 1 / -1; }
+    .opp {
+      padding: 4px 8px; border-radius: 12px; gap: 0 6px; line-height: 1.35;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "name out" "meta conn";
+      align-items: center;
+    }
+    .opp .name { grid-area: name; font-size: 0.9rem; }
+    .opp.turn .name { padding-right: 14px; }
+    .opp .meta { grid-area: meta; gap: 8px; font-size: 0.76rem; white-space: nowrap; overflow: hidden; }
+    .opp .out-badge { grid-area: out; }
+    .opp .conn { grid-area: conn; margin-top: 0; justify-self: end; font-size: 0.7rem; padding: 1px 7px; }
+    .opp.turn::before { top: 5px; right: 8px; font-size: 0.7rem; }
+    .opp .stamp-bubble { bottom: calc(100% - 20px); }
+    /* 場 */
+    .felt { padding: 6px 12px 10px; border-radius: 16px; gap: 0; }
+    .felt-row { gap: 6px 28px; }
+    .pile { gap: 0; }
+    .pile .label { font-size: 0.7rem; letter-spacing: 0.08em; }
+    .pile .cards { padding-top: 6px; gap: 5px; }
+    .felt .card { width: 46px; height: 64px; border-radius: 8px; }
+    .felt .card .big { font-size: 1.3rem; margin-top: 8px; }
+    .felt .card .corner { font-size: 0.72rem; top: 3px; left: 4px; }
+    .felt .card .corner small { font-size: 0.62rem; }
+    .felt .card.joker .big { font-size: 0.62rem; margin-top: 0; }
+    .felt .card.back .count { font-size: 0.78rem; padding: 1px 6px; }
+    /* ログ: 最新2行だけ（1行ずつ、はみ出しは省略） */
+    .log { padding: 4px 10px; min-height: 0; gap: 0; font-size: 0.78rem; line-height: 1.5; border-radius: 12px; }
+    .log .line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .log .line:not(:nth-last-child(-n+2)) { display: none; }
+    .log .mini .chip { font-size: 0.72rem; line-height: 1.25; }
+    .log:empty { display: none; }
+    /* 手札トレイ */
+    .tray { padding: 6px 10px 8px; gap: 4px; border-radius: 16px; }
+    .tray-head { gap: 2px 8px; align-items: center; }
+    .tray-head .total { font-size: 1.15rem; }
+    .tray-right { gap: 8px; }
+    .tray-head .eyebrow { letter-spacing: 0.06em; }
+    .myturn-chip { font-size: 0.74rem; padding: 1px 9px; }
+    .sort-toggle { min-height: 40px; }
+    #btn-stamp { padding: 4px 10px; min-height: 40px; }
+    .hand { padding: 12px 2px 2px; gap: 6px; }
+    .hand .card { width: 52px; height: 74px; }
+    .hand .card .big { font-size: 1.55rem; }
+    .hand .card.joker .big { font-size: 0.72rem; margin-top: 0; }
+    .game .msg { font-size: 0.78rem; line-height: 1.35; min-height: 1.35em; }
+    /* ボタンの高さを抑える（タップ領域は 44px 確保） */
+    .actions { gap: 6px; }
+    .actions button { min-height: 44px; padding: 6px 8px; white-space: nowrap; border-radius: 12px; }
+    .actions .btn-yaniv { font-size: 1.1rem; }
+    .game .waiting { font-size: 0.85rem; }
+  }
+  /* 背の低い画面（iPhone SE など）: さらに詰め、3つのボタンを横1行に */
+  @media (max-width: 600px) and (max-height: 760px) {
+    .game { gap: 6px; }
+    .topbar-title h2 { font-size: 1rem; }
+    .felt { padding: 4px 12px 8px; }
+    .felt .card { width: 42px; height: 58px; }
+    .felt .card .big { font-size: 1.15rem; margin-top: 7px; }
+    .hand { padding-top: 11px; }
+    .hand .card { width: 48px; height: 68px; }
+    .hand .card .big { font-size: 1.4rem; margin-top: 8px; }
+    .hand .card.joker .big { font-size: 0.66rem; margin-top: 0; }
+    .actions { grid-template-columns: 1fr 1.15fr 1fr; }
+    .actions .btn-yaniv { grid-column: auto; font-size: 1.05rem; letter-spacing: 0.02em; }
+    .actions button { padding: 6px 4px; font-size: 0.84rem; }
   }
 </style>
 </head>
@@ -602,7 +700,7 @@
           <label for="host-name">あなたの名前</label>
           <input type="text" id="host-name" maxlength="12" placeholder="名前（12文字まで）" autocomplete="nickname">
         </div>
-        <p class="small muted">部屋を作ると6文字のコードとURLが出ます。友だちに共有してください。参加者はログイン不要です。</p>
+        <p class="small muted">部屋を作ると4桁の部屋コードとURLが出ます。友だちに共有してください。参加者はログイン不要です。</p>
         <p class="msg" id="host-msg" aria-live="polite"></p>
         <button type="button" class="btn-primary" id="btn-host-create" style="font-size:1.1rem; padding:14px;">部屋を作る</button>
       </div>
@@ -610,11 +708,11 @@
       <div id="host-room" class="lobby" hidden>
         <div class="roomcode">
           <span class="eyebrow">部屋コード</span>
-          <span class="code nums" id="host-code">——————</span>
+          <span class="code nums" id="host-code">————</span>
         </div>
         <div class="share">
           <input type="text" id="host-url" readonly aria-label="共有URL">
-          <button type="button" class="btn-sm" id="btn-copy-url">URLをコピー</button>
+          <button type="button" class="btn-sm btn-copy" id="btn-copy-url" aria-label="URLをコピー">コピー</button>
         </div>
         <p class="small muted" id="copy-msg" aria-live="polite"></p>
 
@@ -684,8 +782,8 @@
       <div id="join-setup" class="lobby">
         <div class="row">
           <div class="field">
-            <label for="join-code">部屋コード（6文字）</label>
-            <input type="text" id="join-code" class="code-input" maxlength="6" placeholder="ABC234" autocomplete="off" autocapitalize="characters" spellcheck="false">
+            <label for="join-code">部屋コード（4桁の数字）</label>
+            <input type="text" id="join-code" class="code-input nums" inputmode="numeric" pattern="[0-9]*" maxlength="64" placeholder="0000" autocomplete="off" spellcheck="false" enterkeyhint="go">
           </div>
           <div class="field">
             <label for="join-name">あなたの名前</label>
@@ -699,7 +797,7 @@
       <div id="join-room" class="lobby" hidden>
         <div class="roomcode">
           <span class="eyebrow">部屋コード</span>
-          <span class="code nums" id="join-room-code">——————</span>
+          <span class="code nums" id="join-room-code">————</span>
         </div>
         <div>
           <span class="eyebrow">参加者</span>
@@ -728,17 +826,20 @@
   <section id="screen-game" hidden>
     <div class="game">
       <div class="topbar">
-        <div>
+        <div class="topbar-title">
           <span class="eyebrow">ラウンド <span id="round-no" class="nums">1</span></span>
           <h2 id="turn-label">あなたの番</h2>
         </div>
         <button type="button" class="btn-ghost btn-sm" id="btn-quit">設定に戻る</button>
       </div>
-      <div class="online-bar" id="online-bar" hidden>
-        <span>部屋 <b class="nums" id="game-room-code">——————</b></span>
-        <span class="grow small" id="game-host-note" hidden>このタブを閉じると部屋が終了します</span>
+      <!-- PC: 2段（display: contents）／スマホ: 部屋コードとルールを小さな1〜2行にまとめる -->
+      <div class="game-meta">
+        <div class="online-bar" id="online-bar" hidden>
+          <span class="room">部屋 <b class="nums" id="game-room-code">————</b></span>
+          <span class="grow small" id="game-host-note" hidden><span class="note-long">このタブを閉じると部屋が終了します</span><span class="note-short">閉じると部屋終了</span></span>
+        </div>
+        <div class="rules-line nums" id="game-rules" aria-label="このゲームの設定"></div>
       </div>
-      <div class="rules-line nums" id="game-rules" aria-label="このゲームの設定"></div>
       <div class="opponents" id="opponents"></div>
 
       <div class="felt">
@@ -1412,8 +1513,8 @@
     } else if (cards.length === 0) {
       msg.className = 'msg info';
       msg.textContent = takeable.length
-        ? '捨てるカードを選んでください。光っている捨て札はタップで取れます。'
-        : '捨てるカードを選んでください。';
+        ? '捨てるカードを選択（光る捨て札はタップで取れます）'
+        : '捨てるカードを選んでください';
     } else {
       msg.className = 'msg info';
       var g = E.analyzeGroup(cards);
@@ -1421,7 +1522,7 @@
       var selIds = {};
       cards.forEach(function (c) { selIds[c.id] = true; });
       var rest = vp.hand.filter(function (c) { return !selIds[c.id]; });
-      msg.textContent = kind + 'を捨てます（残り ' + E.handValue(rest) + '点）。' + (takeSel ? '捨て札から取ります。' : '');
+      msg.textContent = kind + 'を捨てる（残り ' + E.handValue(rest) + '点）' + (takeSel ? '・捨て札から取る' : '');
     }
   }
 
@@ -1789,6 +1890,7 @@
         if (why) { if (e === name) m.textContent = why; }
         else if (m.textContent === OFFLINE_TEXT || m.textContent === NOPEER_TEXT) m.textContent = '';
       });
+      if (name === 'join') refreshCodeMsg();
     }
   }
   $('entries').addEventListener('click', function (ev) {
@@ -1801,6 +1903,8 @@
   function peerAvailable() { return typeof window.Peer !== 'undefined' && !!N; }
   /** Online play needs PeerJS (loaded from the CDN) and a network; offline / PWA launches only have local play. */
   var OFFLINE_TEXT = 'オンライン対戦にはインターネット接続が必要です';
+  var CODE_TEXT = '部屋コードは4桁の数字です';
+  var badParamCode = false; // ?room= had an invalid (e.g. old 6-char) code
   var NOPEER_TEXT = '通信ライブラリ（PeerJS）を読み込めませんでした。ネットワークを確認して再読み込みしてください。';
   /** null when online play can start, otherwise the reason to show. */
   function onlineBlocker() {
@@ -1813,6 +1917,7 @@
       var m = $(id);
       if (m.textContent === OFFLINE_TEXT) m.textContent = '';
     });
+    refreshCodeMsg();
   });
 
   function shareUrl(code) {
@@ -1829,7 +1934,7 @@
       case 'replaced': return '別のタブで参加しました（この画面は切断されました）';
       case 'cpu': return 'ホストがあなたの席を CPU に交代しました';
       case 'host-left': return 'ホストが部屋を閉じました';
-      case 'bad-code': return '部屋コードは6文字です';
+      case 'bad-code': return CODE_TEXT;
       default: return '部屋に接続できませんでした（コードを確認してください）';
     }
   }
@@ -1900,8 +2005,9 @@
       if (hostUi && s.type === 'human' && !s.isHost) {
         var b = document.createElement('button');
         b.type = 'button';
-        b.className = 'btn-sm btn-ghost';
-        b.textContent = '退出';
+        b.className = 'btn-sm btn-ghost btn-kick';
+        b.textContent = '外す';
+        b.setAttribute('aria-label', (s.name || '参加者') + 'を外す');
         b.addEventListener('click', function () { try { host.kick(i); } catch (e) { /* ignore */ } });
         row.appendChild(b);
       }
@@ -2038,17 +2144,45 @@
     }, HOST_GIVEUP_MS);
   }
 
-  $('join-code').addEventListener('input', function (ev) {
-    var v = N ? N.normalizeCode(ev.target.value) : ev.target.value.toUpperCase();
-    if (v !== ev.target.value) ev.target.value = v;
+  /**
+   * Join input (N.parseCodeInput): a pasted share URL -> its 4 digits; full-width -> half-width;
+   * 1-3 digits = still typing (no error); letters / 5+ digits -> error, never "extract the digits"
+   * (an old code like AB2345 must not turn into room 2345).
+   */
+  function parseCode(v) {
+    if (N && N.parseCodeInput) return N.parseCodeInput(String(v || ''));
+    return { value: String(v || ''), code: '', error: true, fromUrl: false };
+  }
+  function refreshCodeMsg() {
+    if (host || client) return;
+    var msg = $('join-msg');
+    if (msg.textContent && msg.textContent !== CODE_TEXT) return; // offline / other messages win
+    var val = $('join-code').value;
+    var bad = parseCode(val).error || (badParamCode && val === '');
+    msg.textContent = bad ? CODE_TEXT : '';
+  }
+  function onCodeInput(ev) {
+    if (ev && (ev.isComposing || ev.keyCode === 229)) return; // IME composition: clean up on compositionend
+    var el = $('join-code');
+    var r = parseCode(el.value);
+    if (!r.error && r.value !== el.value) el.value = r.value;
+    badParamCode = false;
+    refreshCodeMsg();
+  }
+  $('join-code').addEventListener('input', onCodeInput);
+  $('join-code').addEventListener('compositionend', onCodeInput);
+  $('join-code').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && !ev.isComposing && ev.keyCode !== 229) { ev.preventDefault(); $('btn-join').click(); }
   });
 
   $('btn-join').addEventListener('click', function () {
-    var code = N ? N.normalizeCode($('join-code').value) : '';
+    var parsed = parseCode($('join-code').value);
+    if (!parsed.error) $('join-code').value = parsed.value;
+    var code = N && !parsed.error ? N.sanitizeCode(parsed.code) : '';
     var name = $('join-name').value.trim().slice(0, 12);
     var jb = onlineBlocker();
     if (jb) { $('join-msg').textContent = jb; return; }
-    if (!N || !N.isValidCode(code)) { $('join-msg').textContent = '部屋コードは6文字です'; return; }
+    if (!N || !N.isValidCode(code)) { $('join-msg').textContent = CODE_TEXT; try { $('join-code').focus(); } catch (e) { /* ignore */ } return; }
     if (!name) { $('join-msg').textContent = '名前を入力してください'; return; }
     lsSet(NAME_KEY, name);
     $('join-msg').textContent = '接続中…';
@@ -2137,6 +2271,15 @@
   });
 
   // ---------- init ----------
+  // seat tokens saved for old 6-char room codes are useless now: drop them
+  try {
+    var staleKeys = [];
+    for (var ki = 0; ki < localStorage.length; ki++) {
+      var k = localStorage.key(ki);
+      if (k && /^yaniv\.seat\.(?!\d{4}$)/.test(k)) staleKeys.push(k);
+    }
+    staleKeys.forEach(function (k) { lsDel(k); });
+  } catch (e) { /* ignore */ }
   loadSettings();
   renderLobby();
   var savedName = lsGet(NAME_KEY) || '';
@@ -2145,9 +2288,14 @@
   var roomParam = '';
   try { roomParam = new URLSearchParams(location.search).get('room') || ''; } catch (e) { /* ignore */ }
   if (roomParam && N) {
-    $('join-code').value = N.normalizeCode(roomParam);
-    setEntry('join');
-    try { if (!savedName) $('join-name').focus(); } catch (e) { /* ignore */ }
+    var paramCode = N.sanitizeCode(roomParam);
+    $('join-code').value = paramCode; // old 6-char links -> empty field + message
+    badParamCode = !paramCode;
+    setEntry('join'); // shows the offline warning first if any; otherwise refreshCodeMsg() shows CODE_TEXT
+    try {
+      if (!paramCode) $('join-code').focus();
+      else if (!savedName) $('join-name').focus();
+    } catch (e) { /* ignore */ }
   } else {
     setEntry('local');
   }
