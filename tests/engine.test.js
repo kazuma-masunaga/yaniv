@@ -588,7 +588,8 @@ test('normal CPU discards the group that minimizes remaining value and takes a u
     discardTop: { kind: 'single', cards: [C('2', 'H')] }
   });
   s.discardPile[0].by = 1;
-  const mv = E.chooseMove(s, 0, 'normal', E.createRng(1));
+  // 0.99 固定の乱数: 膠着対策のランダム捨て（20%）と山札優先の探索が発動しない＝評価ロジックそのものを検証
+  const mv = E.chooseMove(s, 0, 'normal', () => 0.99);
   assert.equal(mv.type, 'play');
   assert.deepEqual(mv.discard.slice().sort(), ['KD', 'KS']);
   assert.equal(mv.draw, '2H', 'takes the 2 (pairs with 2C and is below deck expectation)');
@@ -603,7 +604,7 @@ test('normal CPU evaluates discards by remaining hand value (same rank counts on
   });
   s.discardPile[0].by = 1;
   for (const lvl of ['normal', 'strong']) {
-    const mv = E.chooseMove(s, 0, lvl, E.createRng(1));
+    const mv = E.chooseMove(s, 0, lvl, () => 0.99);
     assert.equal(mv.type, 'play');
     assert.deepEqual(mv.discard, ['9D'], lvl + ' should discard the 9');
   }
@@ -623,4 +624,37 @@ test('discardError returns a string for every invalid group, null for valid', ()
   assert.equal(typeof E.discardError([C('A', 'S'), C('K', 'S'), C('Q', 'S')]), 'string');
   assert.equal(typeof E.discardError([J1, J2, C('5', 'S')]), 'string');
   assert.equal(typeof E.discardError([]), 'string');
+});
+
+test('anti-stall: CPU-only and 1-human tables of every size (2-8) always finish', () => {
+  for (let n = 2; n <= 8; n++) {
+    for (const level of ['normal', 'strong']) {
+      for (let seed = 1; seed <= 40; seed++) {
+        const rng = E.createRng(seed * 13 + n);
+        const players = [];
+        for (let i = 0; i < n; i++) players.push({ name: 'P' + i, type: 'cpu' });
+        let s = E.createGame({ players, jokers: seed % 3, limit: [31, 51, 71, 101][seed % 4], cpuLevel: level }, rng);
+        let t = 0;
+        while (s.phase !== 'gameOver') {
+          if (s.phase !== 'playing') { t = 0; s = E.startRound(s, rng); continue; }
+          s = E.applyMove(s, E.chooseMove(s, s.currentPlayer, level, rng), rng);
+          assert.ok(++t < 3000, `round did not end: n=${n} ${level} seed=${seed}`);
+        }
+      }
+    }
+  }
+});
+
+test('roundMoves counts plays in the current round and resets on a new round', () => {
+  const rng = E.createRng(5);
+  let s = E.startRound(E.createGame({ players: [{ name: 'a', type: 'cpu' }, { name: 'b', type: 'cpu' }, { name: 'c', type: 'cpu' }], jokers: 2, limit: 101, cpuLevel: 'normal' }, rng), rng);
+  assert.equal(s.roundMoves, 0);
+  let plays = 0;
+  while (s.phase === 'playing') {
+    const mv = E.chooseMove(s, s.currentPlayer, 'normal', rng);
+    s = E.applyMove(s, mv, rng);
+    if (mv.type === 'play') { plays++; if (s.phase === 'playing') assert.equal(s.roundMoves, plays); }
+  }
+  s = E.startRound(s, rng);
+  assert.equal(s.roundMoves, 0);
 });

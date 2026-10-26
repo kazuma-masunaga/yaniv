@@ -22,7 +22,13 @@
   var HAND_SIZE = 5;
   var MIN_PLAYERS = 2;
   var MAX_PLAYERS = 8; // 8 x 5 = 40 cards dealt; the deck refills from the discard pile as needed
-  var BIG_TABLE = 6; // CPU tweaks for tables with 6+ seats at game start (see chooseMove)
+  // CPU の膠着対策（即ヤニブ＋20%でランダムな合法捨て）。
+  // 6人以上の卓は常に有効。2〜5人の卓は、ラウンドが長引いて膠着しかけたとき
+  // （そのラウンドの手数が STALL_MOVES_MIN と人数×STALL_MOVES_PER_PLAYER の大きい方以上）だけ有効にし、
+  // 普段のラウンドの強さは変えない。
+  var BIG_TABLE = 6; // see chooseMove
+  var STALL_MOVES_MIN = 30;
+  var STALL_MOVES_PER_PLAYER = 8;
   var BIG_TABLE_SHAKE = 0.2;
   var YANIV_MAX = 7;
   var ASSAF_PENALTY = 30;
@@ -254,6 +260,7 @@
       nextStarter: null,
       roundResult: null,
       lastMove: null,
+      roundMoves: 0,
       winner: null
     };
   }
@@ -285,6 +292,7 @@
     s.phase = 'playing';
     s.roundResult = null;
     s.lastMove = null;
+    s.roundMoves = 0;
     return s;
   }
 
@@ -409,6 +417,7 @@
       drawSource: drawSource,
       drawnCard: drawSource === 'discard' ? drawn : null
     };
+    s.roundMoves = (state.roundMoves | 0) + 1;
 
     reshuffleIfNeeded(s, rng);
     s.currentPlayer = nextActive(s, pi);
@@ -614,7 +623,9 @@
     //     cards back into circulation and breaks the stalemate.
     // Judged on the seats at the table (not who is still in), so a game that started with 6+ keeps
     // the same CPU style after eliminations.
-    var bigTable = state.players.length >= BIG_TABLE;
+    var nSeats = state.players.length;
+    var bigTable = nSeats >= BIG_TABLE ||
+      (state.roundMoves | 0) >= Math.max(STALL_MOVES_MIN, STALL_MOVES_PER_PLAYER * nSeats);
 
     // Yaniv decision
     if (hasYaniv(moves)) {
