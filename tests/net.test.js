@@ -520,7 +520,7 @@ test('host.close notifies clients with closed; setConfig refuses to shrink below
   await hub.settle();
   assert.equal(last(clients[1].lobbies).config.limit, 51);
   assert.equal(last(clients[1].lobbies).seats.length, 3);
-  assert.throws(() => host.setConfig({ seatCount: 7 }));
+  assert.throws(() => host.setConfig({ seatCount: 9 }));
   host.kick(2);
   await hub.settle();
   assert.equal(host.lobby().seats[2].type, 'empty');
@@ -1009,7 +1009,7 @@ test('stamps: malformed stamp messages do not break host or client', async () =>
   v.connect().catch(() => {});
   await fakeHub.settle();
   hc.send({ t: 'joined', seat: 0, seatToken: 'abcdefghijklmnop', roomCode: '0001' });
-  const bad = [{ t: 'stamp' }, { t: 'stamp', seat: 1 }, { t: 'stamp', seat: 1, id: 'nope' }, { t: 'stamp', seat: 'x', id: 'joy' }, { t: 'stamp', seat: 5, id: 'joy' },
+  const bad = [{ t: 'stamp' }, { t: 'stamp', seat: 1 }, { t: 'stamp', seat: 1, id: 'nope' }, { t: 'stamp', seat: 'x', id: 'joy' }, { t: 'stamp', seat: 8, id: 'joy' },
     { t: 'stamp', seat: -1, id: 'joy' }, { t: 'stamp', seat: 1.5, id: 'joy' }, { t: 'stamp', seat: 1, id: '<script>' }];
   for (const b of bad) hc.send(b);
   await fakeHub.settle();
@@ -1019,6 +1019,137 @@ test('stamps: malformed stamp messages do not break host or client', async () =>
   assert.deepEqual(stamps, [{ seat: 4, id: 'pray' }], 'client still alive and accepts a valid stamp');
   v.leave(); ft.close();
   host.close();
+});
+
+// ---------- up to 8 seats ----------
+test('8 seats: 3 humans (host + 2 clients) + 5 CPU start and auto-run to gameOver', async () => {
+  const { host, clients, hub } = await setupRoom({ names: ['A', 'B'], config: { seatCount: 8, limit: 31, jokers: 0, cpuLevel: 'strong' }, seed: 808 });
+  assert.equal(host.lobby().seats.length, 8);
+  assert.equal(last(clients[0].lobbies).seats.length, 8);
+  assert.equal(last(clients[1].lobbies).config.seatCount, 8);
+  host.start();
+  await hub.settle();
+  const st0 = host.state();
+  assert.deepEqual(st0.players.map((p) => p.type), ['human', 'human', 'human', 'cpu', 'cpu', 'cpu', 'cpu', 'cpu']);
+  assert.deepEqual(st0.players.slice(3).map((p) => p.name), ['CPU 4', 'CPU 5', 'CPU 6', 'CPU 7', 'CPU 8']);
+  assert.equal(st0.deck.length + st0.discardPile.reduce((n, g) => n + g.cards.length, 0) + st0.players.reduce((n, p) => n + p.hand.length, 0), 52);
+  clients.forEach((c, i) => {
+    const v = last(c.views);
+    assert.equal(v.players.length, 8);
+    assertViewIsSafe(v, i + 1, st0);
+  });
+  // humans play from their own views: yaniv when allowed, else the first legal discard + draw
+  const pickMove = (legal) => legal.find((m) => m.type === 'yaniv') || legal[0];
+  let turns = 0, rounds = 1, reshuffles = 0, prevDeck = st0.deck.length;
+  while (host.state().phase !== 'gameOver') {
+    const st = host.state();
+    if (st.phase === 'roundEnd') {
+      assert.equal(last(clients[0].views).roundResult.entries.length, 8);
+      host.nextRound();
+      rounds++;
+      await hub.settle();
+      prevDeck = host.state().deck.length;
+      continue;
+    }
+    const cur = st.currentPlayer;
+    if (st.players[cur].type === 'cpu') {
+      await new Promise((r) => setTimeout(r, 1));
+    } else if (cur === 0) {
+      assert.equal(host.submitMove(pickMove(E.legalMoves(st))).ok, true);
+    } else {
+      const c = clients[cur - 1];
+      const v = last(c.views);
+      assert.equal(v.currentPlayer, cur);
+      assertViewIsSafe(v, cur, st);
+      c.submitMove(pickMove(v.legalMoves));
+    }
+    await hub.settle();
+    const after = host.state();
+    if (after.phase === 'playing' && after.deck.length > prevDeck) reshuffles++;
+    prevDeck = after.deck.length;
+    turns++;
+    if (turns > 20000) throw new Error('8-seat game did not finish');
+  }
+  const fin = host.state();
+  assert.equal(fin.players.filter((p) => !p.eliminated).length, 1);
+  assert.ok(fin.winner >= 0 && fin.winner < 8);
+  for (const c of clients) {
+    assert.equal(last(c.views).phase, 'gameOver');
+    assert.equal(last(c.views).winner, fin.winner);
+    assert.equal(c.errors.length, 0, JSON.stringify(c.errors));
+  }
+  assert.ok(rounds >= 2, 'rounds ' + rounds);
+  assert.ok(reshuffles >= 1, 'deck refilled at least once (' + reshuffles + ')');
+  host.close();
+});
+
+test('seat range: MAX_SEATS = 8; seatCount 2-8; seats 0-7 accepted, 8+ rejected on the client', async () => {
+  assert.equal(N.MAX_SEATS, 8);
+  assert.equal(N.MIN_SEATS, 2);
+  for (const x of [0, 1, 5, 7]) assert.equal(N.isSeatIndex(x), true, String(x));
+  for (const x of [-1, 8, 9, 1.5, '1', null, NaN, Infinity]) assert.equal(N.isSeatIndex(x), false, String(x));
+  // host side
+  const { host, hub } = await setupRoom({});
+  for (const n of [2, 3, 4, 5, 6, 7, 8]) { host.setConfig({ seatCount: n }); assert.equal(host.lobby().seats.length, n); }
+  for (const n of [1, 9, 10, 0, 2.5, '8']) assert.throws(() => host.setConfig({ seatCount: n }), /seatCount must be 2-8/);
+  assert.equal(host.lobby().seats.length, 8);
+  host.close();
+  // client side, fed by a fake host
+  const fakeHub = N.createMemoryHub();
+  const ft = fakeHub.createTransport();
+  await ft.open(N.peerIdFor('0808'));
+  let hc = null;
+  ft.onConnection((cn) => { hc = cn; cn.onMessage(() => {}); });
+  const mk = () => {
+    const v = N.createClient({ transport: fakeHub.createTransport(), roomCode: '0808', name: 'V', connectTimeoutMs: 0, backoff: [1] });
+    v.stamps = []; v.views = []; v.lobbies = [];
+    v.onStamp((x) => v.stamps.push(x)); v.onView((x) => v.views.push(x)); v.onLobby((x) => v.lobbies.push(x));
+    v.connect().catch(() => {});
+    return v;
+  };
+  // joined: seat 8 ignored, seat 7 accepted
+  const v = mk();
+  await fakeHub.settle();
+  hc.send({ t: 'joined', seat: 8, seatToken: 'abcdefghijklmnop', roomCode: '0808' });
+  await fakeHub.settle();
+  assert.notEqual(v.seat, 8);
+  hc.send({ t: 'joined', seat: 7, seatToken: 'abcdefghijklmnop', roomCode: '0808' });
+  await fakeHub.settle();
+  assert.equal(v.seat, 7);
+  // stamps: 0-7 ok, 8+ dropped
+  for (const seat of [8, 9, 100, -1]) hc.send({ t: 'stamp', seat, id: 'joy' });
+  for (const seat of [0, 7]) hc.send({ t: 'stamp', seat, id: 'joy' });
+  await fakeHub.settle();
+  assert.deepEqual(v.stamps, [{ seat: 0, id: 'joy' }, { seat: 7, id: 'joy' }]);
+  // lobby with 9 seats is cut to 8
+  const seat = (i) => ({ name: 'S' + i, type: i ? 'cpu' : 'human', connected: true, isHost: !i });
+  hc.send({ t: 'lobby', seats: Array.from({ length: 9 }, (_, i) => seat(i)), config: { seatCount: 8 } });
+  await fakeHub.settle();
+  assert.equal(last(v.lobbies).seats.length, 8);
+  // views: 8 players accepted, 9 rejected
+  const view = (n, me) => ({ phase: 'playing', seat: me, players: Array.from({ length: n }, (_, i) => (i === me ? { name: 'p' + i, handCount: 1, score: 0, hand: [] } : { name: 'p' + i, handCount: 5, score: 0 })), currentPlayer: 0, round: 1, deckCount: 1, discardPile: [], legalMoves: [], takeable: [], config: { limit: 101 } });
+  hc.send({ t: 'view', view: view(9, 7) });
+  await fakeHub.settle();
+  assert.equal(v.views.length, 0, '9-player view rejected');
+  hc.send({ t: 'view', view: view(8, 7) });
+  await fakeHub.settle();
+  assert.equal(v.views.length, 1, '8-player view accepted');
+  assert.equal(v.views[0].players.length, 8);
+  v.leave(); ft.close();
+});
+
+test('cpuDelayFor: CPU wait shrinks step by step with the number of CPUs', () => {
+  assert.deepEqual(N.cpuDelayFor(0), [600, 900]);
+  assert.deepEqual(N.cpuDelayFor(1), [600, 900]);
+  assert.deepEqual(N.cpuDelayFor(3), [600, 900]);
+  assert.deepEqual(N.cpuDelayFor(4), [500, 750]);
+  assert.deepEqual(N.cpuDelayFor(5), [450, 650]);
+  assert.deepEqual(N.cpuDelayFor(6), [400, 600]);
+  assert.deepEqual(N.cpuDelayFor(7), [400, 600]);
+  for (let n = 1; n <= 7; n++) {
+    const [a, b] = N.cpuDelayFor(n), [pa, pb] = N.cpuDelayFor(n - 1);
+    assert.ok(a <= pa && b <= pb && a < b);
+  }
 });
 
 test('parseCodeInput (join field): share URLs, full-width, partial input, old codes', () => {

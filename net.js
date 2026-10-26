@@ -36,6 +36,21 @@
   // App-specific prefix on the public PeerJS server: 4 digits alone would collide with other apps easily.
   var PEER_PREFIX = 'yaniv-kmz7-';
   var STAMP_INTERVAL_MS = 1500;
+  /** Seats per room (host included). Seat indices are 0..MAX_SEATS-1. */
+  var MIN_SEATS = 2;
+  var MAX_SEATS = 8;
+  function isSeatIndex(x) { return typeof x === 'number' && isFinite(x) && Math.floor(x) === x && x >= 0 && x < MAX_SEATS; }
+
+  /**
+   * CPU "thinking" wait [min, max] ms before a CPU moves. With many CPUs at the table a full lap
+   * gets long, so the wait shrinks step by step: <=3 CPUs 600-900, 4 -> 500-750, 5 -> 450-650, 6+ -> 400-600.
+   */
+  function cpuDelayFor(cpuCount) {
+    if (cpuCount >= 6) return [400, 600];
+    if (cpuCount === 5) return [450, 650];
+    if (cpuCount === 4) return [500, 750];
+    return [600, 900];
+  }
 
   /** Stamps (online only). Fixed ids -> emoji/label; the UI renders only these strings. */
   var STAMPS = [
@@ -440,7 +455,7 @@
     var random = typeof opts.random === 'function' ? opts.random : defaultRandom;
     var rng = typeof opts.rng === 'function' ? opts.rng : E.createRng((random() * 0xffffffff) >>> 0);
     var codeGen = typeof opts.codeGen === 'function' ? opts.codeGen : function () { return randomCode(random); };
-    var cpuDelay = Array.isArray(opts.cpuDelay) ? opts.cpuDelay : [600, 900];
+    var cpuDelay = Array.isArray(opts.cpuDelay) ? opts.cpuDelay : null; // null = cpuDelayFor(number of CPUs)
     var now = typeof opts.now === 'function' ? opts.now : function () { return Date.now(); };
 
     var config = { jokers: 2, limit: 101, cpuLevel: 'normal', starter: 'zero', seatCount: 3 };
@@ -548,7 +563,13 @@
       if (!state || state.phase !== 'playing') return;
       var p = state.players[state.currentPlayer];
       if (p.type !== 'cpu') return;
-      var delay = cpuDelay[0] + Math.floor(random() * Math.max(0, cpuDelay[1] - cpuDelay[0] + 1));
+      var range = cpuDelay;
+      if (!range) {
+        var cpus = 0;
+        for (var ci = 0; ci < state.players.length; ci++) if (state.players[ci].type === 'cpu') cpus++;
+        range = cpuDelayFor(cpus);
+      }
+      var delay = range[0] + Math.floor(random() * Math.max(0, range[1] - range[0] + 1));
       cpuTimer = setTimeout(cpuTurn, delay);
     }
     function cpuTurn() {
@@ -723,7 +744,7 @@
       if (patch.cpuLevel != null) { if (['weak', 'normal', 'strong'].indexOf(patch.cpuLevel) < 0) throw new Error('cpuLevel'); next.cpuLevel = patch.cpuLevel; }
       if (patch.starter != null) { if (['zero', 'highest'].indexOf(patch.starter) < 0) throw new Error('starter'); next.starter = patch.starter; }
       if (patch.seatCount != null) {
-        if (!isInt(patch.seatCount) || patch.seatCount < 2 || patch.seatCount > 5) throw new Error('seatCount must be 2-5');
+        if (!isInt(patch.seatCount) || patch.seatCount < MIN_SEATS || patch.seatCount > MAX_SEATS) throw new Error('seatCount must be ' + MIN_SEATS + '-' + MAX_SEATS);
         var highest = 0;
         for (var i = 0; i < seats.length; i++) if (seats[i].type !== 'empty') highest = i;
         if (patch.seatCount < highest + 1) throw new Error('席が埋まっているため減らせません');
@@ -923,7 +944,7 @@
     function sanitizeLobby(msg) {
       if (!Array.isArray(msg.seats)) return null;
       var seats = [];
-      for (var i = 0; i < msg.seats.length && i < 5; i++) {
+      for (var i = 0; i < msg.seats.length && i < MAX_SEATS; i++) {
         var s = msg.seats[i];
         if (!isObj(s)) return null;
         var type = s.type === 'human' || s.type === 'cpu' ? s.type : 'empty';
@@ -947,7 +968,7 @@
     function validView(v) {
       if (!isObj(v)) return false;
       if (['playing', 'roundEnd', 'gameOver'].indexOf(v.phase) < 0) return false;
-      if (!isInt(v.seat) || !Array.isArray(v.players) || v.players.length < 2 || v.players.length > 5) return false;
+      if (!isInt(v.seat) || !Array.isArray(v.players) || v.players.length < MIN_SEATS || v.players.length > MAX_SEATS) return false;
       if (v.seat < 0 || v.seat >= v.players.length) return false;
       if (!isInt(v.currentPlayer) || !isInt(v.round) || !isInt(v.deckCount)) return false;
       if (!Array.isArray(v.discardPile) || !Array.isArray(v.legalMoves) || !Array.isArray(v.takeable)) return false;
@@ -982,7 +1003,7 @@
         if (!isObj(msg) || typeof msg.t !== 'string') return;
         switch (msg.t) {
           case 'joined':
-            if (!isInt(msg.seat) || msg.seat < 0 || msg.seat > 4 || !isValidToken(msg.seatToken)) return;
+            if (!isSeatIndex(msg.seat) || !isValidToken(msg.seatToken)) return;
             clearJoinTimer();
             client.seat = msg.seat;
             client.seatToken = seatToken = msg.seatToken;
@@ -1021,7 +1042,7 @@
             if (conn) { var c1 = conn; conn = null; c1.close('closed'); }
             break;
           case 'stamp':
-            if (!isInt(msg.seat) || msg.seat < 0 || msg.seat > 4 || !isStampId(msg.id)) return;
+            if (!isSeatIndex(msg.seat) || !isStampId(msg.id)) return;
             callAll(H.stamp, { seat: msg.seat, id: msg.id });
             break;
           case 'pong':
@@ -1159,6 +1180,10 @@
     NAME_MAX: NAME_MAX,
     STAMPS: STAMPS,
     STAMP_INTERVAL_MS: STAMP_INTERVAL_MS,
+    MIN_SEATS: MIN_SEATS,
+    MAX_SEATS: MAX_SEATS,
+    isSeatIndex: isSeatIndex,
+    cpuDelayFor: cpuDelayFor,
     isStampId: isStampId,
     randomCode: randomCode,
     randomToken: randomToken,

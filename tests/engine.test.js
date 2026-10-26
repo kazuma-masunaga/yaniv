@@ -419,20 +419,27 @@ test('startRound: 5 cards each, one face-up discard, deck size correct', () => {
 
 test('createGame validates config', () => {
   assert.throws(() => E.createGame({ players: [{ name: 'a' }] }, E.createRng(1)));
-  assert.throws(() => E.createGame(baseConfig(6), E.createRng(1)));
+  assert.throws(() => E.createGame(baseConfig(9), E.createRng(1)), /players must be 2-8/);
+  for (const n of [2, 5, 6, 7, 8]) assert.equal(E.createGame(baseConfig(n), E.createRng(1)).players.length, n);
+  assert.equal(E.MAX_PLAYERS, 8);
   assert.throws(() => E.createGame(baseConfig(2, { jokers: 3 }), E.createRng(1)));
   assert.throws(() => E.createGame(baseConfig(2, { limit: 50 }), E.createRng(1)));
 });
 
 // ---------- determinism ----------
-function playGame(seed, level, maxTurns = 20000) {
+function playGame(seed, level, maxTurns = 20000, fixed = {}) {
   const rng = E.createRng(seed);
-  const n = 2 + Math.floor(rng() * 4);
+  // n/jokers/limit always consume the rng in the same order (keeps old seeds' games identical)
+  const rn = 2 + Math.floor(rng() * 4);
+  const rj = [0, 1, 2][Math.floor(rng() * 3)];
+  const rl = [31, 51, 71, 101][Math.floor(rng() * 4)];
+  const n = fixed.n != null ? fixed.n : rn;
   const cfg = baseConfig(n, {
-    jokers: [0, 1, 2][Math.floor(rng() * 3)],
-    limit: [31, 51, 71, 101][Math.floor(rng() * 4)],
+    jokers: fixed.jokers != null ? fixed.jokers : rj,
+    limit: fixed.limit != null ? fixed.limit : rl,
     cpuLevel: level === 'mixed' ? 'normal' : level
   });
+  let reshuffles = 0;
   let s = E.createGame(cfg, rng);
   const moves = [];
   let turns = 0;
@@ -447,11 +454,13 @@ function playGame(seed, level, maxTurns = 20000) {
     const key = (m) => (m.type === 'yaniv' ? 'yaniv' : 'play|' + m.discard.slice().sort().join(',') + '|' + m.draw);
     assert.ok(legal.some((m) => key(m) === key(mv)), `move not legal (seed ${seed}, level ${lvl}): ${JSON.stringify(mv)}`);
     moves.push(mv);
+    const deckBefore = s.deck.length;
     s = E.applyMove(s, mv, rng);
+    if (s.phase === 'playing' && mv.type === 'play' && s.deck.length > deckBefore - (mv.draw === 'deck' ? 1 : 0)) reshuffles++;
     turns++;
     if (turns > maxTurns) throw new Error('game did not finish (seed ' + seed + ')');
   }
-  return { state: s, moves, turns };
+  return { state: s, moves, turns, reshuffles };
 }
 
 test('determinism: same seed + same moves -> identical JSON', () => {
@@ -495,6 +504,55 @@ test('CPU simulation: 240 full games across levels finish without error', () => 
     totalTurns += r.turns;
   }
   assert.ok(totalTurns > 240);
+});
+
+test('CPU simulation: 6-8 players x jokers 0-2 x every limit reach gameOver (deck reshuffles often)', () => {
+  const levels = ['weak', 'normal', 'strong', 'mixed'];
+  let games = 0, reshuffles = 0;
+  const byN = {};
+  for (const n of [6, 7, 8]) {
+    for (const jokers of [0, 1, 2]) {
+      for (const limit of [31, 51, 71, 101]) {
+        for (let k = 0; k < 3; k++) {
+          const seed = 5000 + n * 1000 + jokers * 100 + limit + k * 7;
+          const r = playGame(seed, levels[(n + jokers + k) % levels.length], 40000, { n, jokers, limit });
+          assert.equal(r.state.phase, 'gameOver');
+          assert.equal(r.state.players.length, n);
+          assert.equal(r.state.players.filter((p) => !p.eliminated).length, 1);
+          assert.equal(r.state.players[r.state.winner].eliminated, false);
+          const last = r.state.roundResult;
+          assert.ok(last && last.entries.length === n);
+          games++;
+          reshuffles += r.reshuffles;
+          byN[n] = (byN[n] || 0) + r.reshuffles;
+        }
+      }
+    }
+  }
+  assert.equal(games, 108);
+  // with 40 cards dealt the deck runs dry a lot: make sure that path was really exercised
+  for (const n of [6, 7, 8]) assert.ok(byN[n] > 50, 'reshuffles for ' + n + ' players: ' + byN[n]);
+  assert.ok(reshuffles > 300, 'total reshuffles ' + reshuffles);
+});
+
+test('8 players, 0 jokers: deal leaves 11 cards; card count is conserved through many reshuffles', () => {
+  const rng = E.createRng(4242);
+  let s = E.startRound(E.createGame(baseConfig(8, { jokers: 0 }), rng), rng);
+  assert.equal(s.deck.length, 52 - 40 - 1);
+  const count = (st) => st.deck.length + st.discardPile.reduce((a, g) => a + g.cards.length, 0) + st.players.reduce((a, p) => a + p.hand.length, 0);
+  let reshuffles = 0;
+  for (let t = 0; t < 400 && s.phase === 'playing'; t++) {
+    const legal = E.legalMoves(s);
+    // never declare: keep drawing from the deck to drain it repeatedly
+    const mv = legal.find((m) => m.type === 'play' && m.draw === 'deck') || legal.find((m) => m.type === 'play');
+    assert.ok(mv, 'a play move always exists');
+    const before = s.deck.length;
+    s = E.applyMove(s, mv, rng);
+    if (s.deck.length > before) reshuffles++;
+    assert.equal(count(s), 52);
+    assert.ok(s.players.every((p) => p.hand.length >= 1));
+  }
+  assert.ok(reshuffles >= 10, 'reshuffles ' + reshuffles);
 });
 
 test('CPU levels always return a legal move on random mid-game states', () => {

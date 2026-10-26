@@ -196,6 +196,9 @@
   .seg button { border: 0; border-radius: 0; padding: 8px 14px; background: var(--surface); }
   .seg button + button { border-left: 2px solid var(--line); }
   .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+  /* 人数（2〜8）: 7つのボタンを欄の幅いっぱいに等分して1行に収める */
+  .seg-count { display: flex; }
+  .seg-count button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 8px 0; font-variant-numeric: tabular-nums; }
   .slots { display: grid; gap: 8px; }
   .slot {
     display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center;
@@ -267,6 +270,9 @@
   .opp.turn::before { content: '▶'; position: absolute; right: 10px; top: 8px; color: var(--accent); font-size: 0.8rem; }
   .opp.out { opacity: 0.5; }
   .opp .out-badge { font-size: 0.7rem; font-weight: 800; color: var(--bad); }
+  /* 手札・累計: 通常は「手札 n枚」「累計 m」の2つ、コンパクト表示（スマホで相手5人以上）は「手札n・累計m」 */
+  .opp .meta .m-long { display: contents; }
+  .opp .meta .m-short { display: none; }
 
   .felt {
     background: radial-gradient(ellipse at 50% 30%, var(--felt), var(--felt-deep));
@@ -540,6 +546,31 @@
     .opp .conn { grid-area: conn; margin-top: 0; justify-self: end; font-size: 0.7rem; padding: 1px 7px; }
     .opp.turn::before { top: 5px; right: 8px; font-size: 0.7rem; }
     .opp .stamp-bubble { bottom: calc(100% - 20px); }
+    /* 相手が5人以上（合計6〜8人）: 3列のコンパクト表示（名前1行＋「手札n・累計m」1行、接続は丸ドット） */
+    .opponents.compact { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px 4px; }
+    .opponents.compact .opp:last-child:nth-child(odd) { grid-column: auto; }
+    .opponents.compact .opp {
+      padding: 1px 6px; border-radius: 10px; gap: 0; line-height: 1.18;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-areas: "conn name" "meta meta";
+    }
+    .opponents.compact .opp .name { font-size: 0.8rem; }
+    .opponents.compact .opp .name .small { font-size: 0.64rem; }
+    .opponents.compact .opp.turn .name,
+    .opponents.compact .opp.out .name { padding-right: 13px; }
+    .opponents.compact .opp .meta { font-size: 0.7rem; }
+    .opponents.compact .opp .meta .m-long { display: none; }
+    .opponents.compact .opp .meta .m-short { display: inline; overflow: hidden; text-overflow: ellipsis; }
+    .opponents.compact .opp .conn {
+      justify-self: start; width: 8px; height: 8px; padding: 0; margin: 0 4px 0 0;
+      border-radius: 50%; font-size: 0; line-height: 0; overflow: hidden;
+    }
+    .opponents.compact .opp .conn.on { background: var(--good); }
+    .opponents.compact .opp .conn.off { background: var(--bad); }
+    .opponents.compact .opp .out-badge { position: absolute; top: 2px; right: 5px; font-size: 0.62rem; line-height: 1.3; }
+    .opponents.compact .opp.turn::before { top: 3px; right: 5px; font-size: 0.62rem; }
+    .opponents.compact .opp .stamp-bubble { bottom: calc(100% - 16px); padding: 2px 8px; gap: 4px; }
+    .opponents.compact .opp .stamp-bubble .st-emoji { font-size: 1.3rem; }
     /* 場 */
     .felt { padding: 6px 12px 10px; border-radius: 16px; gap: 0; }
     .felt-row { gap: 6px 28px; }
@@ -592,6 +623,11 @@
     .actions { grid-template-columns: 1fr 1.15fr 1fr; }
     .actions .btn-yaniv { grid-column: auto; font-size: 1.05rem; letter-spacing: 0.02em; }
     .actions button { padding: 6px 4px; font-size: 0.84rem; }
+    /* 相手7人（3段）でも iPhone SE に収まるよう、コンパクト枠をさらに詰める */
+    .opponents.compact { gap: 2px 3px; }
+    .opponents.compact .opp { padding: 1px 6px; line-height: 1.12; }
+    .opponents.compact .opp .name { font-size: 0.78rem; }
+    .opponents.compact .opp .meta { font-size: 0.68rem; }
   }
 </style>
 </head>
@@ -627,12 +663,15 @@
     <div class="panel lobby" id="panel-local">
       <div class="row">
         <div class="field">
-          <label for="player-count">人数（2〜5人）</label>
-          <div class="seg" id="player-count" role="group" aria-label="人数">
+          <label for="player-count">人数（2〜8人）</label>
+          <div class="seg seg-count" id="player-count" role="group" aria-label="人数">
             <button type="button" data-count="2">2</button>
             <button type="button" data-count="3">3</button>
             <button type="button" data-count="4">4</button>
             <button type="button" data-count="5">5</button>
+            <button type="button" data-count="6">6</button>
+            <button type="button" data-count="7">7</button>
+            <button type="button" data-count="8">8</button>
           </div>
         </div>
       </div>
@@ -718,12 +757,15 @@
 
         <div class="row">
           <div class="field">
-            <label for="host-seats">人数枠（2〜5）</label>
-            <div class="seg" id="host-seats" role="group" aria-label="人数枠">
+            <label for="host-seats">人数枠（2〜8）</label>
+            <div class="seg seg-count" id="host-seats" role="group" aria-label="人数枠">
               <button type="button" data-count="2">2</button>
               <button type="button" data-count="3">3</button>
               <button type="button" data-count="4">4</button>
               <button type="button" data-count="5">5</button>
+              <button type="button" data-count="6">6</button>
+              <button type="button" data-count="7">7</button>
+              <button type="button" data-count="8">8</button>
             </div>
           </div>
         </div>
@@ -936,6 +978,8 @@
   var NAME_KEY = 'yaniv.name';
   var SEAT_KEY_PREFIX = 'yaniv.seat.';
   var HOST_GIVEUP_MS = 30000;
+  var MIN_PLAYERS = 2;
+  var MAX_PLAYERS = (N && N.MAX_SEATS) || 8;
 
   // ---------- settings (local mode) ----------
   var settings = {
@@ -945,7 +989,10 @@
       { name: 'CPU 2', type: 'cpu' },
       { name: 'CPU 3', type: 'cpu' },
       { name: 'CPU 4', type: 'cpu' },
-      { name: 'CPU 5', type: 'cpu' }
+      { name: 'CPU 5', type: 'cpu' },
+      { name: 'CPU 6', type: 'cpu' },
+      { name: 'CPU 7', type: 'cpu' },
+      { name: 'CPU 8', type: 'cpu' }
     ],
     jokers: 2,
     limit: 101,
@@ -959,9 +1006,9 @@
       if (!raw) return;
       var s = JSON.parse(raw);
       if (s && typeof s === 'object') {
-        if (Number.isInteger(s.count) && s.count >= 2 && s.count <= 5) settings.count = s.count;
+        if (Number.isInteger(s.count) && s.count >= MIN_PLAYERS && s.count <= MAX_PLAYERS) settings.count = s.count;
         if (Array.isArray(s.slots)) {
-          for (var i = 0; i < 5 && i < s.slots.length; i++) {
+          for (var i = 0; i < MAX_PLAYERS && i < s.slots.length; i++) {
             if (s.slots[i] && typeof s.slots[i].name === 'string') settings.slots[i].name = s.slots[i].name.slice(0, 12);
             if (s.slots[i] && (s.slots[i].type === 'human' || s.slots[i].type === 'cpu')) settings.slots[i].type = s.slots[i].type;
           }
@@ -1126,7 +1173,11 @@
     if (p.type === 'cpu') {
       viewer = pickViewer();
       render();
-      var delay = 600 + Math.floor(Math.random() * 300);
+      // CPU が多い卓では待ちを段階的に短く（net.js の cpuDelayFor と同じ: 〜3人 600-900ms … 6人以上 400-600ms）
+      var cpus = 0;
+      for (var ci = 0; ci < game.players.length; ci++) if (game.players[ci].type === 'cpu') cpus++;
+      var range = N && N.cpuDelayFor ? N.cpuDelayFor(cpus) : [600, 900];
+      var delay = range[0] + Math.floor(Math.random() * (range[1] - range[0]));
       cpuTimer = setTimeout(cpuTurn, delay);
       return;
     }
@@ -1370,6 +1421,8 @@
     // opponents (everyone except the viewer)
     var opps = $('opponents');
     opps.innerHTML = '';
+    // 相手が5人以上ならスマホ幅で3列のコンパクト表示（CSS 側で 600px 以下のときだけ効く）
+    opps.classList.toggle('compact', V.players.filter(function (p, i) { return i !== me; }).length >= 5);
     V.players.forEach(function (p, i) {
       if (i === me) return;
       var d = document.createElement('div');
@@ -1383,7 +1436,8 @@
       }
       d.innerHTML =
         '<div class="name">' + esc(p.name) + (p.type === 'cpu' ? ' <span class="muted small">CPU</span>' : '') + '</div>' +
-        '<div class="meta nums"><span>手札 ' + (p.eliminated ? '—' : num(p.handCount) + '枚') + '</span><span>累計 ' + num(p.score) + '</span></div>' +
+        '<div class="meta nums"><span class="m-long"><span>手札 ' + (p.eliminated ? '—' : num(p.handCount) + '枚') + '</span><span>累計 ' + num(p.score) + '</span></span>' +
+        '<span class="m-short">手札' + (p.eliminated ? '—' : num(p.handCount)) + '・累計' + num(p.score) + '</span></div>' +
         (p.eliminated ? '<span class="out-badge">脱落</span>' : '') + connHtml;
       opps.appendChild(d);
     });

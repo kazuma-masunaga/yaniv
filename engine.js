@@ -20,6 +20,10 @@
   var SUITS = ['S', 'H', 'D', 'C'];
   var JOKER = 'JOKER';
   var HAND_SIZE = 5;
+  var MIN_PLAYERS = 2;
+  var MAX_PLAYERS = 8; // 8 x 5 = 40 cards dealt; the deck refills from the discard pile as needed
+  var BIG_TABLE = 6; // CPU tweaks for 6+ active players (see chooseMove)
+  var BIG_TABLE_SHAKE = 0.2;
   var YANIV_MAX = 7;
   var ASSAF_PENALTY = 30;
   var DECK_EXPECTED = 5.6;
@@ -215,7 +219,7 @@
   // ---------- Game lifecycle ----------
   function validateConfig(config) {
     if (!config || !Array.isArray(config.players)) throw new Error('config.players required');
-    if (config.players.length < 2 || config.players.length > 5) throw new Error('players must be 2-5');
+    if (config.players.length < MIN_PLAYERS || config.players.length > MAX_PLAYERS) throw new Error('players must be ' + MIN_PLAYERS + '-' + MAX_PLAYERS);
     var jokers = config.jokers == null ? 2 : config.jokers;
     if ([0, 1, 2].indexOf(jokers) < 0) throw new Error('jokers must be 0,1,2');
     var limit = config.limit == null ? 101 : config.limit;
@@ -601,10 +605,20 @@
     }
 
     var strong = level === 'strong';
+    // Big tables (6-8 players): 30-40 cards sit in hands, so the low cards can all end up
+    // held while the deck holds only high ones. Purely greedy CPUs then swap high cards forever
+    // and nobody reaches 7. Two adjustments apply ONLY to games of 6+ players (2-5 players play
+    // exactly as before, rng consumption included):
+    //   - strong declares as soon as it can (no "wait one turn", someone is always short-handed);
+    //   - now and then the CPU discards a random group instead of the greedy one, which puts low
+    //     cards back into circulation and breaks the stalemate.
+    // Judged on the seats at the table (not who is still in), so a game that started with 6+ keeps
+    // the same CPU style after eliminations.
+    var bigTable = state.players.length >= BIG_TABLE;
 
     // Yaniv decision
     if (hasYaniv(moves)) {
-      if (!strong || !hasPlayMove(moves)) return { type: 'yaniv' };
+      if (!strong || !hasPlayMove(moves) || bigTable) return { type: 'yaniv' };
       var othersAllBig = true;
       for (var i = 0; i < state.players.length; i++) {
         if (i === playerIndex || state.players[i].eliminated) continue;
@@ -668,6 +682,7 @@
       return score;
     };
     var cands = bestDiscards(hand, scoreFn);
+    if (bigTable && rng() < BIG_TABLE_SHAKE) cands = validDiscards(hand);
     var discard = cands.length === 1 ? cands[0] : pick(cands, rng);
     var remaining = remainingAfter(hand, discard);
     var drawId = chooseDraw(state, remaining, hvNow - handValue(remaining), takeable, strong, rng);
@@ -719,6 +734,8 @@
     SUITS: SUITS,
     JOKER: JOKER,
     HAND_SIZE: HAND_SIZE,
+    MIN_PLAYERS: MIN_PLAYERS,
+    MAX_PLAYERS: MAX_PLAYERS,
     YANIV_MAX: YANIV_MAX,
     createRng: createRng,
     buildDeck: buildDeck,
