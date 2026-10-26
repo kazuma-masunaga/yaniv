@@ -22,7 +22,7 @@
   var HAND_SIZE = 5;
   var MIN_PLAYERS = 2;
   var MAX_PLAYERS = 8; // 8 x 5 = 40 cards dealt; the deck refills from the discard pile as needed
-  var BIG_TABLE = 6; // CPU tweaks for 6+ active players (see chooseMove)
+  var BIG_TABLE = 6; // CPU tweaks for tables with 6+ seats at game start (see chooseMove)
   var BIG_TABLE_SHAKE = 0.2;
   var YANIV_MAX = 7;
   var ASSAF_PENALTY = 30;

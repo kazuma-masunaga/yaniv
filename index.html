@@ -1173,10 +1173,10 @@
     if (p.type === 'cpu') {
       viewer = pickViewer();
       render();
-      // CPU が多い卓では待ちを段階的に短く（net.js の cpuDelayFor と同じ: 〜3人 600-900ms … 6人以上 400-600ms）
+      // 6人以上の卓で CPU が多いときだけ待ちを段階的に短く（net.js の cpuDelayFor と同じ表。2〜5人は 600-900ms のまま）
       var cpus = 0;
       for (var ci = 0; ci < game.players.length; ci++) if (game.players[ci].type === 'cpu') cpus++;
-      var range = N && N.cpuDelayFor ? N.cpuDelayFor(cpus) : [600, 900];
+      var range = N && N.cpuDelayFor ? N.cpuDelayFor(cpus, game.players.length) : [600, 900];
       var delay = range[0] + Math.floor(Math.random() * (range[1] - range[0]));
       cpuTimer = setTimeout(cpuTurn, delay);
       return;
@@ -1422,7 +1422,8 @@
     var opps = $('opponents');
     opps.innerHTML = '';
     // 相手が5人以上ならスマホ幅で3列のコンパクト表示（CSS 側で 600px 以下のときだけ効く）
-    opps.classList.toggle('compact', V.players.filter(function (p, i) { return i !== me; }).length >= 5);
+    // 卓の人数で決める（パス＆プレイで CPU の手番中に viewer が -1 になっても切り替わらないように）
+    opps.classList.toggle('compact', V.players.length >= 6);
     V.players.forEach(function (p, i) {
       if (i === me) return;
       var d = document.createElement('div');

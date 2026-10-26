@@ -42,10 +42,12 @@
   function isSeatIndex(x) { return typeof x === 'number' && isFinite(x) && Math.floor(x) === x && x >= 0 && x < MAX_SEATS; }
 
   /**
-   * CPU "thinking" wait [min, max] ms before a CPU moves. With many CPUs at the table a full lap
-   * gets long, so the wait shrinks step by step: <=3 CPUs 600-900, 4 -> 500-750, 5 -> 450-650, 6+ -> 400-600.
+   * CPU "thinking" wait [min, max] ms before a CPU moves. Only tables of 6+ seats are sped up
+   * (2-5 seat tables keep the original 600-900ms): 6+ seats with <=3 CPUs 600-900, 4 -> 500-750,
+   * 5 -> 450-650, 6+ -> 400-600.
    */
-  function cpuDelayFor(cpuCount) {
+  function cpuDelayFor(cpuCount, playerCount) {
+    if (typeof playerCount === 'number' && playerCount < 6) return [600, 900];
     if (cpuCount >= 6) return [400, 600];
     if (cpuCount === 5) return [450, 650];
     if (cpuCount === 4) return [500, 750];
@@ -567,7 +569,7 @@
       if (!range) {
         var cpus = 0;
         for (var ci = 0; ci < state.players.length; ci++) if (state.players[ci].type === 'cpu') cpus++;
-        range = cpuDelayFor(cpus);
+        range = cpuDelayFor(cpus, state.players.length);
       }
       var delay = range[0] + Math.floor(random() * Math.max(0, range[1] - range[0] + 1));
       cpuTimer = setTimeout(cpuTurn, delay);
@@ -960,7 +962,7 @@
           limit: [31, 51, 71, 101].indexOf(cfg.limit) >= 0 ? cfg.limit : 101,
           cpuLevel: ['weak', 'normal', 'strong'].indexOf(cfg.cpuLevel) >= 0 ? cfg.cpuLevel : 'normal',
           starter: ['zero', 'highest'].indexOf(cfg.starter) >= 0 ? cfg.starter : 'zero',
-          seatCount: isInt(cfg.seatCount) ? cfg.seatCount : seats.length
+          seatCount: isInt(cfg.seatCount) && cfg.seatCount >= MIN_SEATS && cfg.seatCount <= MAX_SEATS ? cfg.seatCount : Math.max(MIN_SEATS, Math.min(MAX_SEATS, seats.length))
         }
       };
     }

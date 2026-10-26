@@ -1150,6 +1150,12 @@ test('cpuDelayFor: CPU wait shrinks step by step with the number of CPUs', () =>
     const [a, b] = N.cpuDelayFor(n), [pa, pb] = N.cpuDelayFor(n - 1);
     assert.ok(a <= pa && b <= pb && a < b);
   }
+  // 2-5 seat tables keep the original wait regardless of CPU count
+  for (let players = 2; players <= 5; players++) {
+    for (let cpus = 0; cpus < players; cpus++) assert.deepEqual(N.cpuDelayFor(cpus, players), [600, 900]);
+  }
+  assert.deepEqual(N.cpuDelayFor(7, 8), [400, 600]);
+  assert.deepEqual(N.cpuDelayFor(4, 6), [500, 750]);
 });
 
 test('parseCodeInput (join field): share URLs, full-width, partial input, old codes', () => {
