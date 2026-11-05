@@ -369,7 +369,10 @@
   .winner-card .wname { font-family: var(--font-display); font-size: 1.8rem; font-weight: 800; }
   .final { display: grid; gap: 6px; }
   .final .frow { display: grid; gap: 8px; padding: 8px 12px; border-radius: 10px; background: var(--surface); border: 2px solid var(--line); }
-  .final .frow-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .final .frow-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  /* 名前とバッジ側だけ折り返し、点数は常に右端に1行で置く */
+  .final .frow-head > span:first-child { flex: 1 1 0; min-width: 0; }
+  .final .frow-head > span:last-child { white-space: nowrap; }
   .final .frow-hand { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; min-width: 0; }
   .final .frow-hand .cards { display: flex; gap: 6px; flex-wrap: wrap; }
   .final .frow.win { border-color: var(--accent); }
@@ -378,8 +381,8 @@
   .final .frow.win .rank-no { color: var(--accent); }
   .badge.wins { background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); }
   .wins-tag { font-weight: 800; color: var(--accent); }
-  /* 単発の通算最下位数（勝ち数・「返された」と区別できるよう淡い赤地に枠線） */
-  .badge.lasts { background: var(--bad-soft); color: var(--fg); border: 1px solid var(--bad); }
+  /* 単発の通算最下位数（勝ち数の灰地・「返された」の淡い赤地と区別できるよう、灰地に赤枠・赤文字） */
+  .badge.lasts { background: var(--surface-2); color: var(--bad); border: 1px solid var(--bad); }
 
   @media (max-width: 460px) {
     h1 { font-size: 2rem; }
@@ -1197,7 +1200,7 @@
         localWins[game.winner]++;
         // 最下位 = ranking の最後の席（同点の扱いは engine の ranking に従う）
         var rk = game.ranking;
-        if (localLasts && Array.isArray(rk) && rk.length) { var lo = rk[rk.length - 1]; if (lo >= 0 && lo < localLasts.length) localLasts[lo]++; }
+        if (localLasts && Array.isArray(rk) && rk.length) { var lo = rk[rk.length - 1]; if (Number.isInteger(lo) && lo >= 0 && lo < localLasts.length) localLasts[lo]++; }
         winCounted = true;
       }
       renderGameOver(buildLocalView());
