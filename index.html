@@ -1089,6 +1089,8 @@
     $('opt-limit').value = String(settings.limit);
     $('opt-level').value = settings.cpuLevel;
     renderSeg($('opt-starter'), 'starter', settings.starter);
+    // 単発では2ラウンド目が無いので「次ラウンドの先手」は隠す（値は保持）
+    $('opt-starter').closest('.row').hidden = +settings.limit === 0;
   }
   function renderSeg(el, key, value) {
     el.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset[key] === value)); });
@@ -1101,7 +1103,7 @@
     saveSettings(); renderLobby();
   });
   $('opt-jokers').addEventListener('change', function (ev) { settings.jokers = +ev.target.value; saveSettings(); });
-  $('opt-limit').addEventListener('change', function (ev) { settings.limit = +ev.target.value; saveSettings(); });
+  $('opt-limit').addEventListener('change', function (ev) { settings.limit = +ev.target.value; saveSettings(); renderLobby(); });
   $('opt-level').addEventListener('change', function (ev) { settings.cpuLevel = ev.target.value; saveSettings(); });
   $('opt-starter').addEventListener('click', function (ev) {
     var b = ev.target.closest('button');
@@ -1915,7 +1917,7 @@
     var wins = winsOf(V);
     $('winner-label').textContent = '単発勝負の勝者';
     $('winner-name').textContent = wp.name;
-    $('winner-sub').textContent = '1ラウンド勝負。手札点（加点）の少ない順に順位。' + (wins ? wp.name + ' は通算 ' + num(wins[w]) + '勝。' : '');
+    $('winner-sub').textContent = '1ラウンド勝負（加点の少ない順）。' + (wins ? wp.name + ' は通算 ' + num(wins[w]) + '勝。' : '');
     $('over-title').textContent = '単発勝負の結果';
     renderAssafBanner($('over-assaf'), V);
     var list = $('final-list');
@@ -1930,15 +1932,12 @@
       if (en && en.role === 'yaniv') roleBadge = ' <span class="badge yaniv">ヤニブ</span>';
       if (en && en.role === 'assaf') roleBadge = ' <span class="badge assaf">ヤニブ返し</span>';
       if (en && en.role === 'caught') roleBadge = ' <span class="badge caught">返された</span>';
-      var winsBadge = wins ? ' <span class="badge wins">通算 ' + num(wins[i]) + '勝</span>' : '';
+      var winsBadge = wins && num(wins[i]) >= 1 ? ' <span class="badge wins">通算 ' + num(wins[i]) + '勝</span>' : '';
       var added = en ? num(en.added) : num(p.score);
-      var detail = '';
-      if (en && en.role === 'caught') detail = '<span class="muted small">（手札 ' + num(en.value) + ' + ペナルティ 30）</span>';
-      else if (en && (en.role === 'yaniv' || en.role === 'assaf')) detail = '<span class="muted small">（手札 ' + num(en.value) + '点 → 0）</span>';
       var head = document.createElement('div');
       head.className = 'frow-head';
       head.innerHTML = '<span><span class="rank-no">' + num(k + 1) + '位</span><b>' + esc(p.name) + '</b>' + roleBadge + winsBadge + '</span>' +
-        '<span><b>+' + added + '</b> 点' + detail + '</span>';
+        '<span><b>+' + added + '</b> 点</span>';
       d.appendChild(head);
       if (en && Array.isArray(en.hand)) {
         var row = document.createElement('div');
@@ -1949,7 +1948,10 @@
         row.appendChild(cards);
         var hv = document.createElement('span');
         hv.className = 'muted small';
-        hv.textContent = '手札 ' + num(en.value) + '点';
+        // 加点の内訳はカード横の1か所にまとめる（点数の列が揃うように）
+        if (en.role === 'caught') hv.textContent = '手札 ' + num(en.value) + '点 + ペナルティ 30';
+        else if (en.role === 'yaniv' || en.role === 'assaf') hv.textContent = '手札 ' + num(en.value) + '点 → 0点';
+        else hv.textContent = '手札 ' + num(en.value) + '点';
         row.appendChild(hv);
         d.appendChild(row);
       }
@@ -2196,6 +2198,7 @@
     $('host-limit').value = String(lobby.config.limit);
     $('host-level').value = lobby.config.cpuLevel;
     renderSeg($('host-starter'), 'starter', lobby.config.starter || 'zero');
+    $('host-starter').closest('.row').hidden = +lobby.config.limit === 0;
     renderSeatList($('host-seat-list'), lobby, !lobby.inGame);
     var humans = lobby.seats.filter(function (s) { return s.type === 'human'; }).length;
     $('btn-host-start').disabled = lobby.inGame || humans < 1;

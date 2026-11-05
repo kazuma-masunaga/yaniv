@@ -273,12 +273,11 @@ test('net: single room ends after one round; wins are counted, broadcast and kep
   const w2 = host.wins();
   assert.equal(w2.reduce((a, b) => a + b, 0), 2);
   assert.equal(w2[host.state().winner], w1[host.state().winner] + 1);
-  // back to the lobby: humans keep their wins, the CPU seat (3) is emptied -> 0
+  // back to the lobby: everyone's wins reset to 0 (same as local "設定に戻る")
   host.backToLobby();
   await hub.settle();
   const w3 = host.wins();
-  assert.deepEqual(w3.slice(0, 3), w2.slice(0, 3));
-  assert.equal(w3[3], 0);
+  assert.deepEqual(w3, [0, 0, 0, 0]);
   assert.deepEqual(last(clients[0].lobbies).wins, w3);
   clients.forEach((c) => assert.equal(c.errors.length, 0, JSON.stringify(c.errors)));
   host.close();
@@ -329,7 +328,7 @@ test('net: kick (lobby) and replaceWithCpu (in game) reset that seat; others kee
   assert.equal(host.lobby().seats[2].type, 'empty');
   host.kick(1);
   await hub.settle();
-  assert.deepEqual(host.wins(), [before[0], 0, 0]);
+  assert.deepEqual(host.wins(), [0, 0, 0]);
   // a different person joins the freed seat -> starts from 0
   const c = await joinClient(hub, host.roomCode, 'New');
   assert.equal(c.info.seat, 1);

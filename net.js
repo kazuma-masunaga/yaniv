@@ -25,7 +25,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var PROTO = 1;
+  var PROTO = 2; // 2: 単発モード（limit 0）・脱落ライン 201/301・wins/ranking を追加。旧クライアントは参加時に弾く
   var CODE_CHARS = '0123456789'; // room code = 4 digits ("0000".."9999")
   var TOKEN_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   var CODE_LEN = 4;
@@ -854,7 +854,9 @@
       state = null;
       moveNo = 0;
       for (var i = 0; i < seats.length; i++) {
-        if (seats[i].type === 'cpu') { seats[i] = makeSeat(i); resetWins(i); }
+        if (seats[i].type === 'cpu') seats[i] = makeSeat(i);
+        // ロビーに戻ったら全員の勝ち数を 0 に（ローカルの「設定に戻る」と同じ扱い）
+        resetWins(i);
       }
       broadcastLobby();
       callAll(stateHandlers, null);
