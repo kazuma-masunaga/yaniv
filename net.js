@@ -39,6 +39,10 @@
   /** Seats per room (host included). Seat indices are 0..MAX_SEATS-1. */
   var MIN_SEATS = 2;
   var MAX_SEATS = 8;
+  /** 脱落ライン。0 = 単発（1ラウンド勝負）。engine.js の LIMITS と同じ並び。 */
+  var SINGLE = 0;
+  var LIMITS = [SINGLE, 31, 51, 71, 101, 201, 301];
+  function isLimit(x) { return LIMITS.indexOf(x) >= 0; }
   function isSeatIndex(x) { return typeof x === 'number' && isFinite(x) && Math.floor(x) === x && x >= 0 && x < MAX_SEATS; }
 
   /**
@@ -74,6 +78,12 @@
   // ---------- small helpers ----------
   function isObj(x) { return !!x && typeof x === 'object' && !Array.isArray(x); }
   function isInt(x) { return typeof x === 'number' && isFinite(x) && Math.floor(x) === x; }
+  /** 単発の勝ち数（席ごと）: 長さ n の 0 以上の整数配列か。 */
+  function isWinsArray(w, n) {
+    if (!Array.isArray(w) || w.length !== n) return false;
+    for (var i = 0; i < w.length; i++) if (!isInt(w[i]) || w[i] < 0) return false;
+    return true;
+  }
 
   var cryptoObj = (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.getRandomValues === 'function') ? globalThis.crypto : null;
   function defaultRandom() {
@@ -462,6 +472,10 @@
 
     var config = { jokers: 2, limit: 101, cpuLevel: 'normal', starter: 'zero', seatCount: 3 };
     var seats = [];
+    // 単発の勝ち数（席ごと）。ゲーム state の外で持つ（engine の決定論に影響させない）。
+    // その席の人が入れ替わったら 0 に戻す。同じ seatToken での再接続では維持。部屋を閉じれば消える。
+    var wins = [];
+    var winCounted = false; // 今のゲームの勝ちを数え済みか
     var state = null;
     var moveNo = 0;
     var cpuTimer = null;
@@ -478,6 +492,15 @@
       seats = [];
       for (var i = 0; i < config.seatCount; i++) seats.push(makeSeat(i));
       seats[0] = { type: 'human', name: sanitizeName(opts.hostName) || 'ホスト', token: null, conn: null, connected: true, isHost: true, lastStamp: -Infinity };
+      wins = seats.map(function () { return 0; });
+    }
+    function resetWins(i) { if (i >= 0 && i < wins.length) wins[i] = 0; }
+    /** 単発のゲームが決着したら、勝者の席の勝ち数を1つ増やす（1ゲーム1回）。 */
+    function countWin() {
+      if (winCounted || !state || state.phase !== 'gameOver' || state.config.limit !== SINGLE) return false;
+      winCounted = true;
+      if (isInt(state.winner) && state.winner >= 0 && state.winner < wins.length) wins[state.winner]++;
+      return true;
     }
     initSeats();
 
@@ -492,12 +515,13 @@
         config: clone(config),
         seats: seats.map(function (s) {
           return { name: s.type === 'empty' ? '' : s.name, type: s.type === 'empty' ? 'empty' : s.type, connected: !!s.connected, isHost: !!s.isHost };
-        })
+        }),
+        wins: wins.slice()
       };
     }
     function lobbyMessage() {
       var l = lobbySnapshot();
-      return { t: 'lobby', seats: l.seats, config: l.config, inGame: l.inGame, roomCode: l.roomCode };
+      return { t: 'lobby', seats: l.seats, config: l.config, inGame: l.inGame, roomCode: l.roomCode, wins: l.wins };
     }
     function broadcastLobby() {
       var msg = lobbyMessage();
@@ -544,6 +568,8 @@
         roundResult: s.roundResult ? clone(s.roundResult) : null,
         lastMove: s.lastMove ? clone(s.lastMove) : null,
         winner: s.winner,
+        ranking: Array.isArray(s.ranking) ? s.ranking.slice() : null,
+        wins: wins.slice(),
         legalMoves: myTurn ? E.legalMoves(s) : [],
         takeable: myTurn ? clone(E.takeableFromDiscard(s)) : [],
         seats: lobbySnapshot().seats
@@ -553,6 +579,7 @@
       eachClient(function (s, i) { s.conn.send({ t: 'view', view: viewFor(i) }); });
     }
     function afterChange() {
+      if (countWin()) broadcastLobby();
       broadcastViews();
       callAll(stateHandlers, state);
       scheduleCpu();
@@ -651,6 +678,7 @@
       for (var i = 0; i < seats.length; i++) if (seats[i].type === 'empty') { free = i; break; }
       if (free < 0) { sendSafe(conn, { t: 'reject', reason: 'full' }); conn.close('rejected'); return; }
       seats[free] = { type: 'human', name: name, token: randomToken(random), conn: conn, connected: true, isHost: false, lastStamp: -Infinity };
+      resetWins(free); // 別の人がこの席に座った
       sendSafe(conn, { t: 'joined', seat: free, seatToken: seats[free].token, roomCode: host.roomCode });
       broadcastLobby();
     }
@@ -742,7 +770,7 @@
       patch = patch || {};
       var next = clone(config);
       if (patch.jokers != null) { if ([0, 1, 2].indexOf(patch.jokers) < 0) throw new Error('jokers'); next.jokers = patch.jokers; }
-      if (patch.limit != null) { if ([31, 51, 71, 101].indexOf(patch.limit) < 0) throw new Error('limit'); next.limit = patch.limit; }
+      if (patch.limit != null) { if (!isLimit(patch.limit)) throw new Error('limit'); next.limit = patch.limit; }
       if (patch.cpuLevel != null) { if (['weak', 'normal', 'strong'].indexOf(patch.cpuLevel) < 0) throw new Error('cpuLevel'); next.cpuLevel = patch.cpuLevel; }
       if (patch.starter != null) { if (['zero', 'highest'].indexOf(patch.starter) < 0) throw new Error('starter'); next.starter = patch.starter; }
       if (patch.seatCount != null) {
@@ -755,12 +783,15 @@
       config = next;
       while (seats.length < config.seatCount) seats.push(makeSeat(seats.length));
       while (seats.length > config.seatCount) seats.pop();
+      while (wins.length < seats.length) wins.push(0);
+      while (wins.length > seats.length) wins.pop();
       broadcastLobby();
       return clone(config);
     };
 
     host.lobby = lobbySnapshot;
     host.config = function () { return clone(config); };
+    host.wins = function () { return wins.slice(); };
     host.state = function () { return state; };
     host.phase = function () { return state ? state.phase : 'lobby'; };
     host.view = function () { return viewFor(0); };
@@ -773,6 +804,7 @@
       var players = seats.map(function (s, i) {
         if (s.type === 'empty') {
           seats[i] = { type: 'cpu', name: 'CPU ' + (i + 1), token: null, conn: null, connected: false, isHost: false, lastStamp: -Infinity };
+          resetWins(i);
           return { name: seats[i].name, type: 'cpu' };
         }
         if (s.type === 'cpu') return { name: s.name || 'CPU ' + (i + 1), type: 'cpu' };
@@ -789,6 +821,7 @@
       state = E.createGame({ players: players, jokers: config.jokers, limit: config.limit, cpuLevel: config.cpuLevel, starter: config.starter }, rng);
       state = E.startRound(state, rng);
       moveNo = 0;
+      winCounted = false;
       broadcastLobby();
       afterChange();
       return state;
@@ -810,6 +843,7 @@
       state = E.createGame(cfg, rng);
       state = E.startRound(state, rng);
       moveNo = 0;
+      winCounted = false;
       broadcastLobby();
       afterChange();
       return state;
@@ -820,7 +854,7 @@
       state = null;
       moveNo = 0;
       for (var i = 0; i < seats.length; i++) {
-        if (seats[i].type === 'cpu') seats[i] = makeSeat(i);
+        if (seats[i].type === 'cpu') { seats[i] = makeSeat(i); resetWins(i); }
       }
       broadcastLobby();
       callAll(stateHandlers, null);
@@ -839,6 +873,7 @@
       s.type = 'cpu';
       s.connected = false;
       s.token = null;
+      resetWins(seat); // 人から CPU に替わった
       if (state) {
         var next = {};
         for (var k in state) if (Object.prototype.hasOwnProperty.call(state, k)) next[k] = state[k];
@@ -854,6 +889,7 @@
         afterChange();
       } else {
         seats[seat] = makeSeat(seat);
+        resetWins(seat);
         broadcastLobby();
       }
     };
@@ -867,6 +903,7 @@
         host.replaceWithCpu(seat);
       } else {
         seats[seat] = makeSeat(seat);
+        resetWins(seat);
         broadcastLobby();
       }
     };
@@ -952,14 +989,23 @@
         var type = s.type === 'human' || s.type === 'cpu' ? s.type : 'empty';
         seats.push({ name: sanitizeName(s.name), type: type, connected: !!s.connected, isHost: !!s.isHost });
       }
+      // wins は省略可（古いホスト）。あるなら 長さ=席数・0以上の整数 でなければロビーごと捨てる
+      var w = null;
+      if (msg.wins != null) {
+        if (!isWinsArray(msg.wins, msg.seats.length)) return null;
+        w = msg.wins.slice(0, seats.length);
+      } else {
+        w = seats.map(function () { return 0; });
+      }
       var cfg = isObj(msg.config) ? msg.config : {};
       return {
         seats: seats,
+        wins: w,
         inGame: !!msg.inGame,
         roomCode: sanitizeCode(msg.roomCode) || roomCode,
         config: {
           jokers: [0, 1, 2].indexOf(cfg.jokers) >= 0 ? cfg.jokers : 2,
-          limit: [31, 51, 71, 101].indexOf(cfg.limit) >= 0 ? cfg.limit : 101,
+          limit: isLimit(cfg.limit) ? cfg.limit : 101,
           cpuLevel: ['weak', 'normal', 'strong'].indexOf(cfg.cpuLevel) >= 0 ? cfg.cpuLevel : 'normal',
           starter: ['zero', 'highest'].indexOf(cfg.starter) >= 0 ? cfg.starter : 'zero',
           seatCount: isInt(cfg.seatCount) && cfg.seatCount >= MIN_SEATS && cfg.seatCount <= MAX_SEATS ? cfg.seatCount : Math.max(MIN_SEATS, Math.min(MAX_SEATS, seats.length))
@@ -974,7 +1020,7 @@
       if (v.seat < 0 || v.seat >= v.players.length) return false;
       if (!isInt(v.currentPlayer) || !isInt(v.round) || !isInt(v.deckCount)) return false;
       if (!Array.isArray(v.discardPile) || !Array.isArray(v.legalMoves) || !Array.isArray(v.takeable)) return false;
-      if (!isObj(v.config) || [31, 51, 71, 101].indexOf(v.config.limit) < 0) return false;
+      if (!isObj(v.config) || !isLimit(v.config.limit)) return false;
       if (v.config.starter != null && ['zero', 'highest'].indexOf(v.config.starter) < 0) return false;
       for (var i = 0; i < v.players.length; i++) {
         var p = v.players[i];
@@ -982,6 +1028,17 @@
         if (i === v.seat && !Array.isArray(p.hand)) return false;
       }
       if (v.winner != null && (!isInt(v.winner) || v.winner < 0 || v.winner >= v.players.length)) return false;
+      if (v.wins != null && !isWinsArray(v.wins, v.players.length)) return false;
+      if (v.ranking != null) {
+        // 単発の順位: 席 index の並べ替え（重複・範囲外なし）
+        if (!Array.isArray(v.ranking) || v.ranking.length !== v.players.length) return false;
+        var seen = {};
+        for (var ri = 0; ri < v.ranking.length; ri++) {
+          var rx = v.ranking[ri];
+          if (!isInt(rx) || rx < 0 || rx >= v.players.length || seen[rx]) return false;
+          seen[rx] = true;
+        }
+      }
       if (v.roundResult != null) {
         var r = v.roundResult;
         if (!isObj(r) || !Array.isArray(r.entries) || r.entries.length !== v.players.length) return false;
@@ -1184,6 +1241,10 @@
     STAMP_INTERVAL_MS: STAMP_INTERVAL_MS,
     MIN_SEATS: MIN_SEATS,
     MAX_SEATS: MAX_SEATS,
+    SINGLE: SINGLE,
+    LIMITS: LIMITS.slice(),
+    isLimit: isLimit,
+    isWinsArray: isWinsArray,
     isSeatIndex: isSeatIndex,
     cpuDelayFor: cpuDelayFor,
     isStampId: isStampId,

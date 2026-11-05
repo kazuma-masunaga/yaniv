@@ -33,6 +33,10 @@
   var YANIV_MAX = 7;
   var ASSAF_PENALTY = 30;
   var DECK_EXPECTED = 5.6;
+  // 脱落ライン。SINGLE (= 0) は「単発」: 1ラウンドで決着し、そのラウンドの加点の少ない順に順位を付ける。
+  var SINGLE = 0;
+  var LIMITS = [SINGLE, 31, 51, 71, 101, 201, 301];
+  var DEFAULT_LIMIT = 101;
 
   // ---------- RNG ----------
   function createRng(seed) {
@@ -193,6 +197,7 @@
     });
     s.roundResult = state.roundResult ? JSON.parse(JSON.stringify(state.roundResult)) : null;
     s.lastMove = state.lastMove ? JSON.parse(JSON.stringify(state.lastMove)) : null;
+    if (Array.isArray(state.ranking)) s.ranking = state.ranking.slice();
     return s;
   }
 
@@ -228,8 +233,8 @@
     if (config.players.length < MIN_PLAYERS || config.players.length > MAX_PLAYERS) throw new Error('players must be ' + MIN_PLAYERS + '-' + MAX_PLAYERS);
     var jokers = config.jokers == null ? 2 : config.jokers;
     if ([0, 1, 2].indexOf(jokers) < 0) throw new Error('jokers must be 0,1,2');
-    var limit = config.limit == null ? 101 : config.limit;
-    if ([31, 51, 71, 101].indexOf(limit) < 0) throw new Error('limit must be 31/51/71/101');
+    var limit = config.limit == null ? DEFAULT_LIMIT : config.limit;
+    if (LIMITS.indexOf(limit) < 0) throw new Error('limit must be 0(single)/31/51/71/101/201/301');
     var cpuLevel = config.cpuLevel || 'normal';
     if (['weak', 'normal', 'strong'].indexOf(cpuLevel) < 0) throw new Error('bad cpuLevel');
     // starter: who opens the next round.
@@ -261,7 +266,8 @@
       roundResult: null,
       lastMove: null,
       roundMoves: 0,
-      winner: null
+      winner: null,
+      ranking: null // 単発: gameOver 時に席 index を 1位から並べた配列
     };
   }
 
@@ -424,7 +430,33 @@
     return s;
   }
 
+  function isSingle(config) {
+    return !!config && config.limit === SINGLE;
+  }
+
+  /**
+   * 単発の順位: そのラウンドの加点 `added`（ヤニブ返しされた宣言者の +30 込み）の少ない順。
+   * 同点は宣言者から見た手番順（宣言者自身が先頭、その後時計回り）で先の人が上位。
+   * そのラウンドに参加していなかった人（wasActive === false）は末尾に席順で付ける。
+   */
+  function singleRanking(entries, declarer) {
+    var n = entries.length;
+    var order = [];
+    for (var st = 0; st < n; st++) order.push((declarer + st) % n);
+    var pos = {};
+    for (var k = 0; k < n; k++) pos[order[k]] = k;
+    return order.slice().sort(function (a, b) {
+      var ea = entries[a], eb = entries[b];
+      var ia = ea.wasActive === false ? 1 : 0, ib = eb.wasActive === false ? 1 : 0;
+      if (ia !== ib) return ia - ib;
+      if (ia) return a - b;
+      if (ea.added !== eb.added) return ea.added - eb.added;
+      return pos[a] - pos[b];
+    });
+  }
+
   function endRound(s, declarer) {
+    var single = isSingle(s.config);
     var active = activeIndices(s);
     var values = {};
     for (var i = 0; i < active.length; i++) {
@@ -471,7 +503,7 @@
         }
         p.score += entry.added;
         entry.total = p.score;
-        if (p.score >= s.config.limit) {
+        if (!single && p.score >= s.config.limit) {
           p.eliminated = true;
           entry.eliminated = true;
           entry.newlyEliminated = true;
@@ -505,6 +537,13 @@
       nextStarter: starter
     };
     s.nextStarter = starter;
+    if (single) {
+      // 単発: ラウンド結果はそのまま、roundEnd を経ずに決着。脱落判定はしない。
+      s.ranking = singleRanking(entries, declarer);
+      s.phase = 'gameOver';
+      s.winner = s.ranking[0];
+      return s;
+    }
     var remaining = activeIndices(s);
     if (remaining.length <= 1) {
       s.phase = 'gameOver';
@@ -748,6 +787,11 @@
     MIN_PLAYERS: MIN_PLAYERS,
     MAX_PLAYERS: MAX_PLAYERS,
     YANIV_MAX: YANIV_MAX,
+    SINGLE: SINGLE,
+    LIMITS: LIMITS.slice(),
+    DEFAULT_LIMIT: DEFAULT_LIMIT,
+    isSingle: isSingle,
+    singleRanking: singleRanking,
     createRng: createRng,
     buildDeck: buildDeck,
     cardValue: cardValue,

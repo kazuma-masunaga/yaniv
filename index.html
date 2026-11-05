@@ -373,6 +373,11 @@
   .final .frow-hand { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; min-width: 0; }
   .final .frow-hand .cards { display: flex; gap: 6px; flex-wrap: wrap; }
   .final .frow.win { border-color: var(--accent); }
+  /* 単発: 順位と通算勝ち数 */
+  .final .rank-no { display: inline-block; min-width: 2.2em; font-family: var(--font-display); font-weight: 800; color: var(--muted); }
+  .final .frow.win .rank-no { color: var(--accent); }
+  .badge.wins { background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); }
+  .wins-tag { font-weight: 800; color: var(--accent); }
 
   @media (max-width: 460px) {
     h1 { font-size: 2rem; }
@@ -690,10 +695,13 @@
         <div class="field">
           <label for="opt-limit">脱落ライン</label>
           <select id="opt-limit">
+            <option value="0">単発</option>
             <option value="31">31点</option>
             <option value="51">51点</option>
             <option value="71">71点</option>
             <option value="101" selected>101点</option>
+            <option value="201">201点</option>
+            <option value="301">301点</option>
           </select>
         </div>
         <div class="field">
@@ -728,6 +736,8 @@
           <li>ヤニブ宣言で全員公開。宣言者より手札点が低い人がいれば「ヤニブ返し」: 宣言者は手札+30点、返した人は0点。同点は宣言者の勝ち。いなければ宣言者0点。他は手札合計を加算。</li>
           <li>累計が脱落ライン以上で脱落。最後に残った1人が勝ち。前ラウンドで0点だった人が次の先手。</li>
           <li>「次ラウンドの先手」を「加点が高かった人」にすると、前ラウンドで最も多く加点された人（同点なら宣言者から手番順で先の人）が先手になる。</li>
+          <li>脱落ラインは 31 / 51 / 71 / 101 / 201 / 301 点から選べる。201・301 は長期戦向け。</li>
+          <li>脱落ラインを「単発」にすると<b>1ラウンド勝負</b>。誰かのヤニブ宣言でそのまま決着し、そのラウンドの加点（ヤニブ返しされた宣言者の+30を含む）が少ない順に順位が付く。同点は宣言者から手番順で先の人が上。「もう一度遊ぶ」を続けている間は各自の勝ち数（通算n勝）を数える（「設定に戻る」で0に戻る）。</li>
         </ul>
       </details>
     </div>
@@ -781,10 +791,13 @@
           <div class="field">
             <label for="host-limit">脱落ライン</label>
             <select id="host-limit">
+              <option value="0">単発</option>
               <option value="31">31点</option>
               <option value="51">51点</option>
               <option value="71">71点</option>
               <option value="101" selected>101点</option>
+              <option value="201">201点</option>
+              <option value="301">301点</option>
             </select>
           </div>
           <div class="field">
@@ -947,12 +960,12 @@
     <div class="results">
       <div class="winner-card">
         <div class="trophy" aria-hidden="true">🏆</div>
-        <span class="eyebrow">勝者</span>
+        <span class="eyebrow" id="winner-label">勝者</span>
         <div class="wname" id="winner-name">—</div>
         <p class="muted small" id="winner-sub"></p>
       </div>
       <div id="over-assaf" hidden></div>
-      <h3>最終スコア</h3>
+      <h3 id="over-title">最終スコア</h3>
       <div class="final" id="final-list"></div>
       <div class="waiting" id="over-wait" hidden><span>ホストを待っています</span><span class="dots"></span></div>
       <div class="row">
@@ -1014,7 +1027,7 @@
           }
         }
         if ([0, 1, 2].indexOf(s.jokers) >= 0) settings.jokers = s.jokers;
-        if ([31, 51, 71, 101].indexOf(s.limit) >= 0) settings.limit = s.limit;
+        if (E.LIMITS.indexOf(s.limit) >= 0) settings.limit = s.limit;
         if (['weak', 'normal', 'strong'].indexOf(s.cpuLevel) >= 0) settings.cpuLevel = s.cpuLevel;
         if (['zero', 'highest'].indexOf(s.starter) >= 0) settings.starter = s.starter;
       }
@@ -1127,6 +1140,9 @@
   var cpuTimer = null;
   var shownHuman = -1;      // index of human whose hand is currently revealed (pass & play)
   var viewer = -1;          // whose hand the tray shows
+  // 単発の勝ち数（ローカル）。engine の state の外で持つ。「もう一度遊ぶ」で引き継ぎ、「設定に戻る」で捨てる。
+  var localWins = null;
+  var winCounted = false;   // 今のゲームの勝ちを数え済みか
 
   function humanCount() {
     return game.players.filter(function (p) { return p.type === 'human' && !p.eliminated; }).length;
@@ -1134,6 +1150,8 @@
 
   function newGame(cfg) {
     config = cfg;
+    if (!localWins || localWins.length !== cfg.players.length) localWins = cfg.players.map(function () { return 0; });
+    winCounted = false;
     rng = E.createRng((Math.random() * 0xffffffff) >>> 0);
     game = E.createGame(cfg, rng);
     logLines = [];
@@ -1168,7 +1186,11 @@
   function step() {
     if (cpuTimer) { clearTimeout(cpuTimer); cpuTimer = null; }
     if (game.phase === 'roundEnd') { renderRoundEnd(buildLocalView()); return; }
-    if (game.phase === 'gameOver') { renderGameOver(buildLocalView()); return; }
+    if (game.phase === 'gameOver') {
+      if (!winCounted && E.isSingle(game.config) && localWins && game.winner != null) { localWins[game.winner]++; winCounted = true; }
+      renderGameOver(buildLocalView());
+      return;
+    }
     var p = game.players[game.currentPlayer];
     if (p.type === 'cpu') {
       viewer = pickViewer();
@@ -1289,6 +1311,8 @@
       roundResult: game.roundResult,
       lastMove: game.lastMove,
       winner: game.winner,
+      ranking: game.ranking || null,
+      wins: E.isSingle(game.config) && localWins ? localWins.slice() : null,
       seats: null
     };
   }
@@ -1376,15 +1400,22 @@
   });
   updateSortButton();
 
+  /** 単発のときだけ席ごとの勝ち数（長さが合わなければ null）。通常モードでは数えない・出さない。 */
+  function winsOf(V) {
+    if (!V || !E.isSingle(V.config) || !Array.isArray(V.wins) || V.wins.length !== V.players.length) return null;
+    return V.wins.map(num);
+  }
+
   function rulesLineHtml(V) {
     var c = V.config || {};
     var hasCpu = V.players.some(function (p) { return p.type === 'cpu'; });
     var items = [
       'ヤニブ <b>' + num(E.YANIV_MAX) + '点以下</b>',
-      '脱落 <b>' + num(c.limit) + '点</b>',
-      'ジョーカー <b>' + (num(c.jokers) ? num(c.jokers) + '枚' : 'なし') + '</b>',
-      '先手 <b>' + (c.starter === 'highest' ? '加点が高い人' : '0点の人') + '</b>'
+      E.isSingle(c) ? '<b>単発勝負</b>' : '脱落 <b>' + num(c.limit) + '点</b>',
+      'ジョーカー <b>' + (num(c.jokers) ? num(c.jokers) + '枚' : 'なし') + '</b>'
     ];
+    // 単発は1ラウンドで終わるので「次ラウンドの先手」は出さない
+    if (!E.isSingle(c)) items.push('先手 <b>' + (c.starter === 'highest' ? '加点が高い人' : '0点の人') + '</b>');
     if (hasCpu) items.push('CPU <b>' + ({ weak: '弱', normal: '普通', strong: '強' }[c.cpuLevel] || '普通') + '</b>');
     return items.map(function (s) { return '<span>' + s + '</span>'; }).join('');
   }
@@ -1424,6 +1455,8 @@
     // 相手が5人以上ならスマホ幅で3列のコンパクト表示（CSS 側で 600px 以下のときだけ効く）
     // 卓の人数で決める（パス＆プレイで CPU の手番中に viewer が -1 になっても切り替わらないように）
     opps.classList.toggle('compact', V.players.length >= 6);
+    var single = E.isSingle(V.config);
+    var wins = winsOf(V);
     V.players.forEach(function (p, i) {
       if (i === me) return;
       var d = document.createElement('div');
@@ -1435,10 +1468,16 @@
           ? '<span class="badge on conn">接続中</span>'
           : '<span class="badge off conn">切断中</span>';
       }
+      // 単発: 累計は意味がないので出さず、勝ち数（1勝以上）を小さく出す
+      var w = wins && wins[i] > 0 ? num(wins[i]) + '勝' : '';
+      var metaHtml = single
+        ? '<span class="m-long"><span>手札 ' + num(p.handCount) + '枚</span>' + (w ? '<span class="wins-tag">' + w + '</span>' : '') + '</span>' +
+          '<span class="m-short">手札' + num(p.handCount) + (w ? '・<span class="wins-tag">' + w + '</span>' : '') + '</span>'
+        : '<span class="m-long"><span>手札 ' + (p.eliminated ? '—' : num(p.handCount) + '枚') + '</span><span>累計 ' + num(p.score) + '</span></span>' +
+          '<span class="m-short">手札' + (p.eliminated ? '—' : num(p.handCount)) + '・累計' + num(p.score) + '</span>';
       d.innerHTML =
         '<div class="name">' + esc(p.name) + (p.type === 'cpu' ? ' <span class="muted small">CPU</span>' : '') + '</div>' +
-        '<div class="meta nums"><span class="m-long"><span>手札 ' + (p.eliminated ? '—' : num(p.handCount) + '枚') + '</span><span>累計 ' + num(p.score) + '</span></span>' +
-        '<span class="m-short">手札' + (p.eliminated ? '—' : num(p.handCount)) + '・累計' + num(p.score) + '</span></div>' +
+        '<div class="meta nums">' + metaHtml + '</div>' +
         (p.eliminated ? '<span class="out-badge">脱落</span>' : '') + connHtml;
       opps.appendChild(d);
     });
@@ -1483,7 +1522,11 @@
       tray.hidden = false;
       var vp = V.players[me];
       $('hand-owner').textContent = (!online && humanCount() >= 2 ? vp.name + 'の手札' : 'あなたの手札');
-      $('hand-score').textContent = '累計 ' + num(vp.score) + ' / ' + num(V.config && V.config.limit);
+      if (single) {
+        $('hand-score').textContent = wins && wins[me] > 0 ? num(wins[me]) + '勝' : '';
+      } else {
+        $('hand-score').textContent = '累計 ' + num(vp.score) + ' / ' + num(V.config && V.config.limit);
+      }
       var total = E.handValue(vp.hand);
       var totalEl = $('hand-total');
       totalEl.textContent = total;
@@ -1646,6 +1689,7 @@
     if (cpuTimer) { clearTimeout(cpuTimer); cpuTimer = null; }
     if (mode !== 'local') { leaveOnline(); return; }
     game = null;
+    localWins = null;
     show('screen-lobby');
   });
   $('btn-cover').addEventListener('click', function () {
@@ -1853,7 +1897,73 @@
   }
 
   // ---------- game over ----------
+  /** 単発の順位（席 index、1位から）。view の ranking が正しければそれを、無ければ roundResult から計算。 */
+  function singleOrder(V) {
+    var n = V.players.length;
+    if (Array.isArray(V.ranking) && V.ranking.length === n) return V.ranking.map(num);
+    var r = V.roundResult;
+    if (r && Array.isArray(r.entries) && r.entries.length === n) return E.singleRanking(r.entries, num(r.declarer));
+    return V.players.map(function (p, i) { return i; });
+  }
+
+  function renderGameOverSingle(V) {
+    var r = V.roundResult || {};
+    var entries = Array.isArray(r.entries) ? r.entries : [];
+    var order = singleOrder(V);
+    var w = V.winner != null ? V.winner : order[0];
+    var wp = V.players[w] || { name: '—' };
+    var wins = winsOf(V);
+    $('winner-label').textContent = '単発勝負の勝者';
+    $('winner-name').textContent = wp.name;
+    $('winner-sub').textContent = '1ラウンド勝負。手札点（加点）の少ない順に順位。' + (wins ? wp.name + ' は通算 ' + num(wins[w]) + '勝。' : '');
+    $('over-title').textContent = '単発勝負の結果';
+    renderAssafBanner($('over-assaf'), V);
+    var list = $('final-list');
+    list.innerHTML = '';
+    order.forEach(function (i, k) {
+      var p = V.players[i];
+      if (!p) return;
+      var en = entries[i];
+      var d = document.createElement('div');
+      d.className = 'frow nums' + (i === w ? ' win' : '');
+      var roleBadge = '';
+      if (en && en.role === 'yaniv') roleBadge = ' <span class="badge yaniv">ヤニブ</span>';
+      if (en && en.role === 'assaf') roleBadge = ' <span class="badge assaf">ヤニブ返し</span>';
+      if (en && en.role === 'caught') roleBadge = ' <span class="badge caught">返された</span>';
+      var winsBadge = wins ? ' <span class="badge wins">通算 ' + num(wins[i]) + '勝</span>' : '';
+      var added = en ? num(en.added) : num(p.score);
+      var detail = '';
+      if (en && en.role === 'caught') detail = '<span class="muted small">（手札 ' + num(en.value) + ' + ペナルティ 30）</span>';
+      else if (en && (en.role === 'yaniv' || en.role === 'assaf')) detail = '<span class="muted small">（手札 ' + num(en.value) + '点 → 0）</span>';
+      var head = document.createElement('div');
+      head.className = 'frow-head';
+      head.innerHTML = '<span><span class="rank-no">' + num(k + 1) + '位</span><b>' + esc(p.name) + '</b>' + roleBadge + winsBadge + '</span>' +
+        '<span><b>+' + added + '</b> 点' + detail + '</span>';
+      d.appendChild(head);
+      if (en && Array.isArray(en.hand)) {
+        var row = document.createElement('div');
+        row.className = 'frow-hand';
+        var cards = document.createElement('div');
+        cards.className = 'cards';
+        sortHandForDisplay(en.hand).forEach(function (c) { cards.appendChild(cardEl(c, { small: true })); });
+        row.appendChild(cards);
+        var hv = document.createElement('span');
+        hv.className = 'muted small';
+        hv.textContent = '手札 ' + num(en.value) + '点';
+        row.appendChild(hv);
+        d.appendChild(row);
+      }
+      list.appendChild(d);
+    });
+  }
+
   function renderGameOver(V) {
+    $('btn-again').hidden = mode === 'client';
+    $('over-wait').hidden = mode !== 'client';
+    $('btn-lobby').textContent = mode === 'client' ? '部屋を出る' : mode === 'host' ? '部屋のロビーへ' : '設定に戻る';
+    if (E.isSingle(V.config)) { renderGameOverSingle(V); show('screen-over'); return; }
+    $('winner-label').textContent = '勝者';
+    $('over-title').textContent = '最終スコア';
     var w = V.winner;
     var wp = V.players[w] || { name: '—' };
     $('winner-name').textContent = wp.name;
@@ -1896,9 +2006,6 @@
       }
       list.appendChild(d);
     });
-    $('btn-again').hidden = mode === 'client';
-    $('over-wait').hidden = mode !== 'client';
-    $('btn-lobby').textContent = mode === 'client' ? '部屋を出る' : mode === 'host' ? '部屋のロビーへ' : '設定に戻る';
     show('screen-over');
   }
   $('btn-again').addEventListener('click', function () {
@@ -1906,7 +2013,7 @@
     if (mode === 'host') { try { host.restart(); } catch (e) { /* ignore */ } }
   });
   $('btn-lobby').addEventListener('click', function () {
-    if (mode === 'local') { game = null; show('screen-lobby'); return; }
+    if (mode === 'local') { game = null; localWins = null; show('screen-lobby'); return; }
     if (mode === 'host') { host.backToLobby(); return; }
     leaveOnline();
   });
@@ -1924,6 +2031,7 @@
     }
     saveSettings();
     mode = 'local';
+    localWins = null; // 設定画面からの開始は勝ち数 0 から
     newGame({ players: players, jokers: settings.jokers, limit: settings.limit, cpuLevel: settings.cpuLevel, starter: settings.starter });
   });
 
@@ -2056,6 +2164,9 @@
       if (s.type === 'human' && s.isHost) badges += '<span class="badge host">ホスト</span>';
       if (s.type === 'human' && !s.isHost) badges += s.connected ? '<span class="badge on">接続中</span>' : '<span class="badge off">切断中</span>';
       if (s.type === 'cpu') badges += '<span class="badge cpu">CPU</span>';
+      // 単発の通算勝ち数（1勝以上のときだけ）
+      var sw = lobby.config && E.isSingle(lobby.config) && Array.isArray(lobby.wins) ? num(lobby.wins[i]) : 0;
+      if (sw > 0) badges += '<span class="badge wins nums">' + sw + '勝</span>';
       row.innerHTML = '<span class="no nums">' + num(i + 1) + '</span><span class="nm">' + (s.type === 'empty' ? '空席' : esc(s.name)) + '</span>' + badges;
       if (hostUi && s.type === 'human' && !s.isHost) {
         var b = document.createElement('button');
@@ -2073,7 +2184,8 @@
   function configText(cfg) {
     var lv = { weak: '弱', normal: '普通', strong: '強' }[cfg.cpuLevel] || cfg.cpuLevel;
     var st = cfg.starter === 'highest' ? '加点が高かった人' : '0点だった人';
-    return '人数枠 ' + cfg.seatCount + '・ジョーカー ' + (cfg.jokers ? cfg.jokers + '枚' : 'なし') + '・脱落ライン ' + cfg.limit + '点・CPU ' + lv + '・先手 ' + st;
+    var lim = E.isSingle(cfg) ? '単発（1ラウンド勝負）' : '脱落ライン ' + cfg.limit + '点';
+    return '人数枠 ' + cfg.seatCount + '・ジョーカー ' + (cfg.jokers ? cfg.jokers + '枚' : 'なし') + '・' + lim + '・CPU ' + lv + (E.isSingle(cfg) ? '' : '・先手 ' + st);
   }
 
   // ---------- host ----------
