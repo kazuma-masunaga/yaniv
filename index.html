@@ -378,6 +378,8 @@
   .final .frow.win .rank-no { color: var(--accent); }
   .badge.wins { background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); }
   .wins-tag { font-weight: 800; color: var(--accent); }
+  /* 単発の通算最下位数（勝ち数・「返された」と区別できるよう淡い赤地に枠線） */
+  .badge.lasts { background: var(--bad-soft); color: var(--fg); border: 1px solid var(--bad); }
 
   @media (max-width: 460px) {
     h1 { font-size: 2rem; }
@@ -1144,7 +1146,8 @@
   var viewer = -1;          // whose hand the tray shows
   // 単発の勝ち数（ローカル）。engine の state の外で持つ。「もう一度遊ぶ」で引き継ぎ、「設定に戻る」で捨てる。
   var localWins = null;
-  var winCounted = false;   // 今のゲームの勝ちを数え済みか
+  var localLasts = null;    // 単発の最下位数（ローカル）。localWins と同じ扱い
+  var winCounted = false;   // 今のゲームの勝ち・最下位を数え済みか
 
   function humanCount() {
     return game.players.filter(function (p) { return p.type === 'human' && !p.eliminated; }).length;
@@ -1153,6 +1156,7 @@
   function newGame(cfg) {
     config = cfg;
     if (!localWins || localWins.length !== cfg.players.length) localWins = cfg.players.map(function () { return 0; });
+    if (!localLasts || localLasts.length !== cfg.players.length) localLasts = cfg.players.map(function () { return 0; });
     winCounted = false;
     rng = E.createRng((Math.random() * 0xffffffff) >>> 0);
     game = E.createGame(cfg, rng);
@@ -1189,7 +1193,13 @@
     if (cpuTimer) { clearTimeout(cpuTimer); cpuTimer = null; }
     if (game.phase === 'roundEnd') { renderRoundEnd(buildLocalView()); return; }
     if (game.phase === 'gameOver') {
-      if (!winCounted && E.isSingle(game.config) && localWins && game.winner != null) { localWins[game.winner]++; winCounted = true; }
+      if (!winCounted && E.isSingle(game.config) && localWins && game.winner != null) {
+        localWins[game.winner]++;
+        // 最下位 = ranking の最後の席（同点の扱いは engine の ranking に従う）
+        var rk = game.ranking;
+        if (localLasts && Array.isArray(rk) && rk.length) { var lo = rk[rk.length - 1]; if (lo >= 0 && lo < localLasts.length) localLasts[lo]++; }
+        winCounted = true;
+      }
       renderGameOver(buildLocalView());
       return;
     }
@@ -1315,6 +1325,7 @@
       winner: game.winner,
       ranking: game.ranking || null,
       wins: E.isSingle(game.config) && localWins ? localWins.slice() : null,
+      lasts: E.isSingle(game.config) && localLasts ? localLasts.slice() : null,
       seats: null
     };
   }
@@ -1406,6 +1417,11 @@
   function winsOf(V) {
     if (!V || !E.isSingle(V.config) || !Array.isArray(V.wins) || V.wins.length !== V.players.length) return null;
     return V.wins.map(num);
+  }
+  /** 単発のときだけ席ごとの最下位数（無い・長さが合わなければ null = 表示しない）。 */
+  function lastsOf(V) {
+    if (!V || !E.isSingle(V.config) || !Array.isArray(V.lasts) || V.lasts.length !== V.players.length) return null;
+    return V.lasts.map(num);
   }
 
   function rulesLineHtml(V) {
@@ -1692,6 +1708,7 @@
     if (mode !== 'local') { leaveOnline(); return; }
     game = null;
     localWins = null;
+    localLasts = null;
     show('screen-lobby');
   });
   $('btn-cover').addEventListener('click', function () {
@@ -1915,6 +1932,7 @@
     var w = V.winner != null ? V.winner : order[0];
     var wp = V.players[w] || { name: '—' };
     var wins = winsOf(V);
+    var lasts = lastsOf(V);
     $('winner-label').textContent = '単発勝負の勝者';
     $('winner-name').textContent = wp.name;
     $('winner-sub').textContent = '1ラウンド勝負（加点の少ない順）。' + (wins ? wp.name + ' は通算 ' + num(wins[w]) + '勝。' : '');
@@ -1933,6 +1951,7 @@
       if (en && en.role === 'assaf') roleBadge = ' <span class="badge assaf">ヤニブ返し</span>';
       if (en && en.role === 'caught') roleBadge = ' <span class="badge caught">返された</span>';
       var winsBadge = wins && num(wins[i]) >= 1 ? ' <span class="badge wins">通算 ' + num(wins[i]) + '勝</span>' : '';
+      if (lasts && num(lasts[i]) >= 1) winsBadge += ' <span class="badge lasts">最下位 ' + num(lasts[i]) + '回</span>';
       var added = en ? num(en.added) : num(p.score);
       var head = document.createElement('div');
       head.className = 'frow-head';
@@ -2015,7 +2034,7 @@
     if (mode === 'host') { try { host.restart(); } catch (e) { /* ignore */ } }
   });
   $('btn-lobby').addEventListener('click', function () {
-    if (mode === 'local') { game = null; localWins = null; show('screen-lobby'); return; }
+    if (mode === 'local') { game = null; localWins = null; localLasts = null; show('screen-lobby'); return; }
     if (mode === 'host') { host.backToLobby(); return; }
     leaveOnline();
   });
@@ -2033,7 +2052,8 @@
     }
     saveSettings();
     mode = 'local';
-    localWins = null; // 設定画面からの開始は勝ち数 0 から
+    localWins = null; // 設定画面からの開始は勝ち数・最下位数 0 から
+    localLasts = null;
     newGame({ players: players, jokers: settings.jokers, limit: settings.limit, cpuLevel: settings.cpuLevel, starter: settings.starter });
   });
 
@@ -2169,6 +2189,9 @@
       // 単発の通算勝ち数（1勝以上のときだけ）
       var sw = lobby.config && E.isSingle(lobby.config) && Array.isArray(lobby.wins) ? num(lobby.wins[i]) : 0;
       if (sw > 0) badges += '<span class="badge wins nums">' + sw + '勝</span>';
+      // 単発の通算最下位数（1回以上のときだけ）
+      var sl = lobby.config && E.isSingle(lobby.config) && Array.isArray(lobby.lasts) ? num(lobby.lasts[i]) : 0;
+      if (sl > 0) badges += '<span class="badge lasts nums">最下位' + sl + '</span>';
       row.innerHTML = '<span class="no nums">' + num(i + 1) + '</span><span class="nm">' + (s.type === 'empty' ? '空席' : esc(s.name)) + '</span>' + badges;
       if (hostUi && s.type === 'human' && !s.isHost) {
         var b = document.createElement('button');

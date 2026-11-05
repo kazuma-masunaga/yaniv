@@ -419,3 +419,204 @@ test('net: client validates wins / ranking / limit in views and lobbies', async 
   assert.deepEqual(lobbies[3].wins, [0, 0], 'absent wins -> zeros');
   v.leave(); ht.close();
 });
+
+// =====================================================================
+// lasts（単発の通算最下位数）: wins と同じ扱い
+// =====================================================================
+const sum = (a) => a.reduce((x, y) => x + y, 0);
+
+test('net: single lasts: ranking last +1 per game, total = games, carried across restart, broadcast, no double count', async () => {
+  const { host, clients, hub } = await setupRoom({ names: ['A', 'B'], config: { seatCount: 4, limit: 0 }, seed: 9 });
+  assert.deepEqual(host.lobby().lasts, [0, 0, 0, 0]);
+  host.start();
+  await hub.settle();
+  assert.deepEqual(last(clients[0].views).lasts, [0, 0, 0, 0]);
+  let prev = host.lasts();
+  for (let g = 1; g <= 5; g++) {
+    if (g > 1) {
+      host.restart();
+      await hub.settle();
+      assert.deepEqual(host.lasts(), prev, 'restart carries lasts over');
+      assert.deepEqual(last(clients[1].views).lasts, prev);
+    }
+    await finishGame(hub, host, clients, 40 + g);
+    const st = host.state();
+    const lo = last(st.ranking);
+    const now = host.lasts();
+    const expect = prev.slice(); expect[lo]++;
+    assert.deepEqual(now, expect, 'exactly the last-ranked seat +1 (game ' + g + ')');
+    assert.equal(sum(now), g, 'total lasts = games played');
+    assert.equal(sum(host.wins()), g);
+    for (const c of clients) {
+      assert.deepEqual(last(c.views).lasts, now);
+      assert.deepEqual(last(c.lobbies).lasts, now);
+    }
+    // more state changes at gameOver must not count again (reconnect re-sends the view)
+    const a = clients[0];
+    const token = a.info.seatToken;
+    a.leave();
+    await hub.settle();
+    const a2 = await joinClient(hub, host.roomCode, 'A', { seatToken: token });
+    await hub.settle();
+    clients[0] = a2;
+    assert.deepEqual(host.lasts(), now, 'reconnect: kept and not double-counted');
+    assert.deepEqual(last(a2.views).lasts, now);
+    prev = now;
+  }
+  clients.forEach((c) => assert.equal(c.errors.length, 0, JSON.stringify(c.errors)));
+  host.close();
+});
+
+test('net: lasts are not double-counted by afterChange at gameOver (replaceWithCpu of another seat)', async () => {
+  const { host, clients, hub } = await setupRoom({ names: ['A', 'B'], config: { seatCount: 3, limit: 0 }, seed: 5 });
+  host.start();
+  await hub.settle();
+  await finishGame(hub, host, clients, 5);
+  const before = host.lasts();
+  const winsBefore = host.wins();
+  assert.equal(sum(before), 1);
+  host.replaceWithCpu(2); // afterChange() runs again at gameOver
+  await hub.settle();
+  const after = host.lasts();
+  assert.equal(after[2], 0);
+  assert.equal(after[0], before[0]);
+  assert.equal(after[1], before[1]);
+  assert.equal(host.wins()[1], winsBefore[1]);
+  host.close();
+});
+
+test('net: normal mode never counts lasts', async () => {
+  const { host, clients, hub } = await setupRoom({ names: ['A'], config: { seatCount: 3, limit: 31 }, seed: 4 });
+  host.start();
+  await hub.settle();
+  await finishGame(hub, host, clients, 4);
+  assert.equal(host.state().phase, 'gameOver');
+  assert.deepEqual(host.lasts(), [0, 0, 0]);
+  assert.deepEqual(last(clients[0].views).lasts, [0, 0, 0]);
+  host.close();
+});
+
+/** Play single games until `seat` has at least one last place (restart between games). */
+async function lastFor(hub, host, clients, seat) {
+  for (let g = 0; g < 60; g++) {
+    if (host.state() && host.state().phase === 'gameOver') host.restart();
+    else if (!host.state()) host.start();
+    await hub.settle();
+    await finishGame(hub, host, clients, 300 + g);
+    if (host.lasts()[seat] > 0) return;
+  }
+  throw new Error('seat ' + seat + ' never ranked last');
+}
+
+test('net: lasts reset like wins (replaceWithCpu / kick / new person / back to lobby); same seatToken keeps them', async () => {
+  const { host, clients, hub } = await setupRoom({ names: ['A', 'B'], config: { seatCount: 4, limit: 0 }, seed: 31 });
+  await lastFor(hub, host, clients, 1);
+  await lastFor(hub, host, clients, 2);
+  let before = host.lasts();
+  assert.ok(before[1] > 0 && before[2] > 0);
+  // reconnect with the same seatToken: kept
+  const a = clients[0];
+  const token = a.info.seatToken;
+  a.leave();
+  await hub.settle();
+  const a2 = await joinClient(hub, host.roomCode, 'A', { seatToken: token });
+  await hub.settle();
+  assert.equal(a2.info.seat, 1);
+  assert.deepEqual(host.lasts(), before, 'same seatToken: lasts kept');
+  assert.deepEqual(last(a2.views).lasts, before);
+  assert.deepEqual(last(a2.lobbies).lasts, before);
+  // replaceWithCpu in a game -> that seat 0, others kept
+  host.restart();
+  await hub.settle();
+  host.replaceWithCpu(2);
+  await hub.settle();
+  assert.equal(host.lasts()[2], 0);
+  assert.equal(host.wins()[2], 0);
+  assert.equal(host.lasts()[1], before[1]);
+  assert.equal(host.lasts()[0], before[0]);
+  assert.equal(last(a2.views).lasts[2], 0, 'broadcast');
+  // play on so others still have lasts, then kick seat 1 mid-game
+  await finishGame(hub, host, [a2], 77);
+  before = host.lasts();
+  host.restart();
+  await hub.settle();
+  host.kick(1);
+  await hub.settle();
+  assert.equal(host.lasts()[1], 0);
+  assert.equal(host.wins()[1], 0);
+  for (const i of [0, 2, 3]) assert.equal(host.lasts()[i], before[i]);
+  // back to the lobby: everyone 0
+  await finishGame(hub, host, [], 78);
+  assert.ok(sum(host.lasts()) > 0);
+  host.backToLobby();
+  await hub.settle();
+  assert.deepEqual(host.lasts(), [0, 0, 0, 0]);
+  assert.deepEqual(host.lobby().lasts, [0, 0, 0, 0]);
+  host.close();
+});
+
+test('net: lasts — back to lobby resets all; kick in the lobby + a different person joining starts that seat from 0', async () => {
+  const { host, clients, hub } = await setupRoom({ names: ['A', 'B'], config: { seatCount: 3, limit: 0 }, seed: 41 });
+  await lastFor(hub, host, clients, 1);
+  // 「部屋のロビーへ」で全員 0。そのあとロビーで外して別の人が座っても 0 のまま
+  host.backToLobby();
+  await hub.settle();
+  assert.deepEqual(host.lasts(), [0, 0, 0]);
+  // a different person joins a freed seat -> 0 (and the lobby shows 0)
+  host.kick(2);
+  await hub.settle();
+  const c = await joinClient(hub, host.roomCode, 'New');
+  assert.equal(c.info.seat, 2);
+  await hub.settle();
+  assert.deepEqual(last(c.lobbies).lasts, host.lasts());
+  assert.equal(host.lasts()[2], 0);
+  host.close();
+});
+
+test('net: seatCount changes resize lasts', async () => {
+  const { host, hub } = await setupRoom({ config: { seatCount: 3, limit: 0 } });
+  host.setConfig({ seatCount: 7 });
+  assert.deepEqual(host.lobby().lasts, [0, 0, 0, 0, 0, 0, 0]);
+  host.setConfig({ seatCount: 2 });
+  assert.deepEqual(host.lobby().lasts, [0, 0]);
+  await hub.settle();
+  host.close();
+});
+
+test('net: client validates lasts in views and lobbies (bad -> rejected, absent -> accepted / zeros)', async () => {
+  const hub = N.createMemoryHub();
+  const ht = hub.createTransport();
+  await ht.open(N.peerIdFor('7171'));
+  let hc = null;
+  ht.onConnection((cn) => { hc = cn; cn.onMessage(() => {}); });
+  const v = N.createClient({ transport: hub.createTransport(), roomCode: '7171', name: 'V', connectTimeoutMs: 0, backoff: [1] });
+  const views = [], lobbies = [];
+  v.onView((x) => views.push(x));
+  v.onLobby((x) => lobbies.push(x));
+  v.connect().catch(() => {});
+  await hub.settle();
+  hc.send({ t: 'joined', seat: 0, seatToken: 'abcdefghijklmnop', roomCode: '7171' });
+  const base = () => ({ phase: 'gameOver', seat: 0, winner: 1, ranking: [1, 0], players: [{ name: 'a', handCount: 1, score: 0, hand: [] }, { name: 'b', handCount: 1, score: 0 }], currentPlayer: 0, round: 1, deckCount: 1, discardPile: [], legalMoves: [], takeable: [], config: { limit: 0 }, wins: [0, 1], roundResult: { round: 1, declarer: 0, declarerValue: 7, assaf: 1, entries: [{ name: 'a', hand: [], value: 7, added: 37, total: 37 }, { name: 'b', hand: [], value: 3, added: 0, total: 0 }] } });
+  for (const l of [[0], [0, 0, 0], [0, -1], [0, 1.5], [0, '1'], [0, null], 'x', { 0: 1, 1: 0 }, [NaN, 0], [Infinity, 0]]) {
+    const x = base(); x.lasts = l; hc.send({ t: 'view', view: x });
+  }
+  await hub.settle();
+  assert.equal(views.length, 0, 'malformed lasts rejected');
+  const ok = base(); ok.lasts = [1, 0]; hc.send({ t: 'view', view: ok });
+  hc.send({ t: 'view', view: base() }); // no lasts (old host)
+  await hub.settle();
+  assert.equal(views.length, 2);
+  assert.deepEqual(views[0].lasts, [1, 0]);
+  assert.equal(views[1].lasts, undefined, 'absent lasts accepted (the UI treats it as all 0)');
+  const seats = [{ name: 'H', type: 'human', connected: true, isHost: true }, { name: 'X', type: 'cpu', connected: false }];
+  for (const l of [[0], [0, -2], [0, 'a'], [0, 0.5], 'zz', [0, 0, 0]]) hc.send({ t: 'lobby', seats, wins: [0, 0], lasts: l, config: { limit: 0, seatCount: 2 } });
+  await hub.settle();
+  assert.equal(lobbies.length, 0, 'lobbies with bad lasts rejected');
+  hc.send({ t: 'lobby', seats, wins: [1, 0], lasts: [0, 3], config: { limit: 0, seatCount: 2 } });
+  hc.send({ t: 'lobby', seats, wins: [1, 0], config: { limit: 0, seatCount: 2 } });
+  await hub.settle();
+  assert.equal(lobbies.length, 2);
+  assert.deepEqual(lobbies[0].lasts, [0, 3]);
+  assert.deepEqual(lobbies[1].lasts, [0, 0], 'absent lasts -> zeros');
+  v.leave(); ht.close();
+});

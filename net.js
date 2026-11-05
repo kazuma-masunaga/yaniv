@@ -25,7 +25,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var PROTO = 2; // 2: 単発モード（limit 0）・脱落ライン 201/301・wins/ranking を追加。旧クライアントは参加時に弾く
+  var PROTO = 2; // 2: 単発モード（limit 0）・脱落ライン 201/301・wins/ranking を追加。旧クライアントは参加時に弾く（lasts=最下位数 は任意フィールドとして追加したので据え置き。旧クライアントは未知フィールドを無視する）
   var CODE_CHARS = '0123456789'; // room code = 4 digits ("0000".."9999")
   var TOKEN_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   var CODE_LEN = 4;
@@ -78,7 +78,7 @@
   // ---------- small helpers ----------
   function isObj(x) { return !!x && typeof x === 'object' && !Array.isArray(x); }
   function isInt(x) { return typeof x === 'number' && isFinite(x) && Math.floor(x) === x; }
-  /** 単発の勝ち数（席ごと）: 長さ n の 0 以上の整数配列か。 */
+  /** 単発の勝ち数・最下位数（席ごと）: 長さ n の 0 以上の整数配列か。 */
   function isWinsArray(w, n) {
     if (!Array.isArray(w) || w.length !== n) return false;
     for (var i = 0; i < w.length; i++) if (!isInt(w[i]) || w[i] < 0) return false;
@@ -475,7 +475,9 @@
     // 単発の勝ち数（席ごと）。ゲーム state の外で持つ（engine の決定論に影響させない）。
     // その席の人が入れ替わったら 0 に戻す。同じ seatToken での再接続では維持。部屋を閉じれば消える。
     var wins = [];
-    var winCounted = false; // 今のゲームの勝ちを数え済みか
+    // 単発の最下位数（席ごと）。wins と完全に同じ扱い（保持・リセット・配信・検証）。
+    var lasts = [];
+    var winCounted = false; // 今のゲームの勝ち・最下位を数え済みか
     var state = null;
     var moveNo = 0;
     var cpuTimer = null;
@@ -493,13 +495,23 @@
       for (var i = 0; i < config.seatCount; i++) seats.push(makeSeat(i));
       seats[0] = { type: 'human', name: sanitizeName(opts.hostName) || 'ホスト', token: null, conn: null, connected: true, isHost: true, lastStamp: -Infinity };
       wins = seats.map(function () { return 0; });
+      lasts = seats.map(function () { return 0; });
     }
-    function resetWins(i) { if (i >= 0 && i < wins.length) wins[i] = 0; }
-    /** 単発のゲームが決着したら、勝者の席の勝ち数を1つ増やす（1ゲーム1回）。 */
+    /** その席の勝ち数と最下位数を 0 に（席の人が入れ替わった・ロビーに戻った）。 */
+    function resetWins(i) {
+      if (i >= 0 && i < wins.length) wins[i] = 0;
+      if (i >= 0 && i < lasts.length) lasts[i] = 0;
+    }
+    /** 単発のゲームが決着したら、勝者の勝ち数と最下位（ranking の最後）の最下位数を1つずつ増やす（1ゲーム1回）。 */
     function countWin() {
       if (winCounted || !state || state.phase !== 'gameOver' || state.config.limit !== SINGLE) return false;
       winCounted = true;
       if (isInt(state.winner) && state.winner >= 0 && state.winner < wins.length) wins[state.winner]++;
+      var rk = state.ranking;
+      if (Array.isArray(rk) && rk.length) {
+        var lo = rk[rk.length - 1];
+        if (isInt(lo) && lo >= 0 && lo < lasts.length) lasts[lo]++;
+      }
       return true;
     }
     initSeats();
@@ -516,12 +528,13 @@
         seats: seats.map(function (s) {
           return { name: s.type === 'empty' ? '' : s.name, type: s.type === 'empty' ? 'empty' : s.type, connected: !!s.connected, isHost: !!s.isHost };
         }),
-        wins: wins.slice()
+        wins: wins.slice(),
+        lasts: lasts.slice()
       };
     }
     function lobbyMessage() {
       var l = lobbySnapshot();
-      return { t: 'lobby', seats: l.seats, config: l.config, inGame: l.inGame, roomCode: l.roomCode, wins: l.wins };
+      return { t: 'lobby', seats: l.seats, config: l.config, inGame: l.inGame, roomCode: l.roomCode, wins: l.wins, lasts: l.lasts };
     }
     function broadcastLobby() {
       var msg = lobbyMessage();
@@ -570,6 +583,7 @@
         winner: s.winner,
         ranking: Array.isArray(s.ranking) ? s.ranking.slice() : null,
         wins: wins.slice(),
+        lasts: lasts.slice(),
         legalMoves: myTurn ? E.legalMoves(s) : [],
         takeable: myTurn ? clone(E.takeableFromDiscard(s)) : [],
         seats: lobbySnapshot().seats
@@ -785,6 +799,8 @@
       while (seats.length > config.seatCount) seats.pop();
       while (wins.length < seats.length) wins.push(0);
       while (wins.length > seats.length) wins.pop();
+      while (lasts.length < seats.length) lasts.push(0);
+      while (lasts.length > seats.length) lasts.pop();
       broadcastLobby();
       return clone(config);
     };
@@ -792,6 +808,7 @@
     host.lobby = lobbySnapshot;
     host.config = function () { return clone(config); };
     host.wins = function () { return wins.slice(); };
+    host.lasts = function () { return lasts.slice(); };
     host.state = function () { return state; };
     host.phase = function () { return state ? state.phase : 'lobby'; };
     host.view = function () { return viewFor(0); };
@@ -855,7 +872,7 @@
       moveNo = 0;
       for (var i = 0; i < seats.length; i++) {
         if (seats[i].type === 'cpu') seats[i] = makeSeat(i);
-        // ロビーに戻ったら全員の勝ち数を 0 に（ローカルの「設定に戻る」と同じ扱い）
+        // ロビーに戻ったら全員の勝ち数・最下位数を 0 に（ローカルの「設定に戻る」と同じ扱い）
         resetWins(i);
       }
       broadcastLobby();
@@ -999,10 +1016,19 @@
       } else {
         w = seats.map(function () { return 0; });
       }
+      // lasts（最下位数）も wins と同じ扱い。省略可（古いホスト）→ 全員 0
+      var ls = null;
+      if (msg.lasts != null) {
+        if (!isWinsArray(msg.lasts, msg.seats.length)) return null;
+        ls = msg.lasts.slice(0, seats.length);
+      } else {
+        ls = seats.map(function () { return 0; });
+      }
       var cfg = isObj(msg.config) ? msg.config : {};
       return {
         seats: seats,
         wins: w,
+        lasts: ls,
         inGame: !!msg.inGame,
         roomCode: sanitizeCode(msg.roomCode) || roomCode,
         config: {
@@ -1031,6 +1057,7 @@
       }
       if (v.winner != null && (!isInt(v.winner) || v.winner < 0 || v.winner >= v.players.length)) return false;
       if (v.wins != null && !isWinsArray(v.wins, v.players.length)) return false;
+      if (v.lasts != null && !isWinsArray(v.lasts, v.players.length)) return false;
       if (v.ranking != null) {
         // 単発の順位: 席 index の並べ替え（重複・範囲外なし）
         if (!Array.isArray(v.ranking) || v.ranking.length !== v.players.length) return false;
