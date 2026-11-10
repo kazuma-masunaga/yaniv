@@ -4,3 +4,4 @@ require('./engine.test.js');
 require('./net.test.js');
 require('./pwa.test.js');
 require('./single.test.js');
+require('./firstlap.test.js');

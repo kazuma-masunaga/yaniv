@@ -25,7 +25,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var PROTO = 2; // 2: 単発モード（limit 0）・脱落ライン 201/301・wins/ranking を追加。旧クライアントは参加時に弾く（lasts=最下位数 は任意フィールドとして追加したので据え置き。旧クライアントは未知フィールドを無視する）
+  var PROTO = 2; // 2: 単発モード（limit 0）・脱落ライン 201/301・wins/ranking を追加。旧クライアントは参加時に弾く（lasts=最下位数、config.firstLapYaniv=1周目のヤニブ禁止、view.roundMoves は任意フィールドとして追加したので据え置き。旧クライアントは未知フィールドを無視し、禁止中のヤニブはホストが error で弾く）
   var CODE_CHARS = '0123456789'; // room code = 4 digits ("0000".."9999")
   var TOKEN_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   var CODE_LEN = 4;
@@ -470,7 +470,7 @@
     var cpuDelay = Array.isArray(opts.cpuDelay) ? opts.cpuDelay : null; // null = cpuDelayFor(number of CPUs)
     var now = typeof opts.now === 'function' ? opts.now : function () { return Date.now(); };
 
-    var config = { jokers: 2, limit: 101, cpuLevel: 'normal', starter: 'zero', seatCount: 3 };
+    var config = { jokers: 2, limit: 101, cpuLevel: 'normal', starter: 'zero', firstLapYaniv: true, seatCount: 3 };
     var seats = [];
     // 単発の勝ち数（席ごと）。ゲーム state の外で持つ（engine の決定論に影響させない）。
     // その席の人が入れ替わったら 0 に戻す。同じ seatToken での再接続では維持。部屋を閉じれば消える。
@@ -574,6 +574,7 @@
         phase: s.phase,
         round: s.round,
         currentPlayer: s.currentPlayer,
+        roundMoves: s.roundMoves | 0, // 「1周目のヤニブ禁止」の残り人数表示用（任意フィールド。古いクライアントは無視）
         config: clone(s.config),
         players: players,
         deckCount: s.deck.length,
@@ -642,7 +643,11 @@
       var key = moveKey(mv);
       var ok = false;
       for (var i = 0; i < legal.length; i++) if (moveKey(legal[i]) === key) { ok = true; break; }
-      if (!ok) return mv.type === 'yaniv' ? '手札合計が7点以下のときだけ宣言できます' : 'その手は打てません';
+      if (!ok) {
+        if (mv.type !== 'yaniv') return 'その手は打てません';
+        if (E.firstLapRemaining && E.firstLapRemaining(state) > 0) return '1周目はヤニブできません';
+        return '手札合計が7点以下のときだけ宣言できます';
+      }
       try {
         state = E.applyMove(state, mv, rng);
         moveNo++;
@@ -787,6 +792,7 @@
       if (patch.limit != null) { if (!isLimit(patch.limit)) throw new Error('limit'); next.limit = patch.limit; }
       if (patch.cpuLevel != null) { if (['weak', 'normal', 'strong'].indexOf(patch.cpuLevel) < 0) throw new Error('cpuLevel'); next.cpuLevel = patch.cpuLevel; }
       if (patch.starter != null) { if (['zero', 'highest'].indexOf(patch.starter) < 0) throw new Error('starter'); next.starter = patch.starter; }
+      if (patch.firstLapYaniv != null) { if (typeof patch.firstLapYaniv !== 'boolean') throw new Error('firstLapYaniv'); next.firstLapYaniv = patch.firstLapYaniv; }
       if (patch.seatCount != null) {
         if (!isInt(patch.seatCount) || patch.seatCount < MIN_SEATS || patch.seatCount > MAX_SEATS) throw new Error('seatCount must be ' + MIN_SEATS + '-' + MAX_SEATS);
         var highest = 0;
@@ -835,7 +841,7 @@
     host.start = function () {
       if (state) throw new Error('already started');
       var players = playersFromSeats();
-      state = E.createGame({ players: players, jokers: config.jokers, limit: config.limit, cpuLevel: config.cpuLevel, starter: config.starter }, rng);
+      state = E.createGame({ players: players, jokers: config.jokers, limit: config.limit, cpuLevel: config.cpuLevel, starter: config.starter, firstLapYaniv: config.firstLapYaniv }, rng);
       state = E.startRound(state, rng);
       moveNo = 0;
       winCounted = false;
@@ -1036,6 +1042,8 @@
           limit: isLimit(cfg.limit) ? cfg.limit : 101,
           cpuLevel: ['weak', 'normal', 'strong'].indexOf(cfg.cpuLevel) >= 0 ? cfg.cpuLevel : 'normal',
           starter: ['zero', 'highest'].indexOf(cfg.starter) >= 0 ? cfg.starter : 'zero',
+          // 古いホストは送らない → true（=1周目でも宣言できる、従来どおり）
+          firstLapYaniv: typeof cfg.firstLapYaniv === 'boolean' ? cfg.firstLapYaniv : true,
           seatCount: isInt(cfg.seatCount) && cfg.seatCount >= MIN_SEATS && cfg.seatCount <= MAX_SEATS ? cfg.seatCount : Math.max(MIN_SEATS, Math.min(MAX_SEATS, seats.length))
         }
       };
@@ -1050,6 +1058,8 @@
       if (!Array.isArray(v.discardPile) || !Array.isArray(v.legalMoves) || !Array.isArray(v.takeable)) return false;
       if (!isObj(v.config) || !isLimit(v.config.limit)) return false;
       if (v.config.starter != null && ['zero', 'highest'].indexOf(v.config.starter) < 0) return false;
+      if (v.config.firstLapYaniv != null && typeof v.config.firstLapYaniv !== 'boolean') return false;
+      if (v.roundMoves != null && (!isInt(v.roundMoves) || v.roundMoves < 0)) return false;
       for (var i = 0; i < v.players.length; i++) {
         var p = v.players[i];
         if (!isObj(p) || typeof p.name !== 'string' || !isInt(p.handCount) || !isInt(p.score)) return false;

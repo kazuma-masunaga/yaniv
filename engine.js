@@ -242,12 +242,16 @@
     //   'highest' - the player who was charged the most points this round
     var starter = config.starter == null ? 'zero' : config.starter;
     if (['zero', 'highest'].indexOf(starter) < 0) throw new Error('bad starter');
+    // firstLapYaniv: false にすると「1周目はヤニブ禁止」（ラウンド開始から参加者全員が1回ずつ
+    // 打ち終わるまで誰も宣言できない）。既定 true（=1手目から宣言できる、従来どおり）。
+    var firstLapYaniv = config.firstLapYaniv == null ? true : config.firstLapYaniv;
+    if (typeof firstLapYaniv !== 'boolean') throw new Error('firstLapYaniv must be boolean');
     var players = config.players.map(function (p, i) {
       var type = p.type === 'cpu' ? 'cpu' : 'human';
       var name = (p.name != null && String(p.name).trim()) || (type === 'cpu' ? 'CPU ' + (i + 1) : 'Player ' + (i + 1));
       return { name: String(name).slice(0, 20), type: type };
     });
-    return { players: players, jokers: jokers, limit: limit, cpuLevel: cpuLevel, starter: starter };
+    return { players: players, jokers: jokers, limit: limit, cpuLevel: cpuLevel, starter: starter, firstLapYaniv: firstLapYaniv };
   }
 
   function createGame(config, rng) {
@@ -332,11 +336,28 @@
     return out;
   }
 
+  /**
+   * 「1周目のヤニブ禁止」の残り人数: あと何人が打てば宣言できるようになるか（0 = 宣言できる）。
+   * config.firstLapYaniv が false のときだけ効き、ラウンドに参加している（脱落していない）人数から
+   * そのラウンドで play した手数 roundMoves を引いた値。roundMoves は play のたびに 1 増えるので、
+   * 全員が1回ずつ打つとちょうど参加人数になる（脱落はラウンド終了時にしか起きないので人数はラウンド中一定）。
+   * engine の state のほか、同じ形（config / players[].eliminated / roundMoves）の view にも使える。
+   * roundMoves が整数でない（古いホストの view など）ときは 0 を返す。
+   */
+  function firstLapRemaining(state) {
+    if (!state || !state.config || state.config.firstLapYaniv !== false) return 0;
+    var rm = state.roundMoves;
+    if (typeof rm !== 'number' || !isFinite(rm) || Math.floor(rm) !== rm || rm < 0) return 0;
+    var active = 0;
+    for (var i = 0; i < state.players.length; i++) if (!state.players[i].eliminated) active++;
+    return Math.max(0, active - rm);
+  }
+
   function legalMoves(state) {
     if (state.phase !== 'playing') return [];
     var p = state.players[state.currentPlayer];
     var moves = [];
-    if (handValue(p.hand) <= YANIV_MAX) moves.push({ type: 'yaniv' });
+    if (handValue(p.hand) <= YANIV_MAX && firstLapRemaining(state) === 0) moves.push({ type: 'yaniv' });
     var draws = [];
     if (canDrawFromDeck(state)) draws.push('deck');
     var takeable = takeableFromDiscard(state);
@@ -373,6 +394,7 @@
 
     if (move.type === 'yaniv') {
       if (handValue(player.hand) > YANIV_MAX) throw new Error('hand value exceeds 7');
+      if (firstLapRemaining(s) > 0) throw new Error('yaniv is not allowed in the first lap');
       return endRound(s, pi);
     }
     if (move.type !== 'play') throw new Error('unknown move type');
@@ -791,6 +813,7 @@
     LIMITS: LIMITS.slice(),
     DEFAULT_LIMIT: DEFAULT_LIMIT,
     isSingle: isSingle,
+    firstLapRemaining: firstLapRemaining,
     singleRanking: singleRanking,
     createRng: createRng,
     buildDeck: buildDeck,

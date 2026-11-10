@@ -727,6 +727,15 @@
           </div>
         </div>
       </div>
+      <div class="row">
+        <div class="field">
+          <label for="opt-firstlap">1周目のヤニブ</label>
+          <div class="seg" id="opt-firstlap" role="group" aria-label="1周目のヤニブ">
+            <button type="button" data-firstlap="true" aria-pressed="true">あり</button>
+            <button type="button" data-firstlap="false" aria-pressed="false">禁止</button>
+          </div>
+        </div>
+      </div>
 
       <p class="msg" id="lobby-msg" aria-live="polite"></p>
       <button type="button" class="btn-primary" id="btn-start" style="font-size:1.1rem; padding:14px;">ゲーム開始</button>
@@ -741,6 +750,7 @@
           <li>ヤニブ宣言で全員公開。宣言者より手札点が低い人がいれば「ヤニブ返し」: 宣言者は手札+30点、返した人は0点。同点は宣言者の勝ち。いなければ宣言者0点。他は手札合計を加算。</li>
           <li>累計が脱落ライン以上で脱落。最後に残った1人が勝ち。前ラウンドで0点だった人が次の先手。</li>
           <li>「次ラウンドの先手」を「加点が高かった人」にすると、前ラウンドで最も多く加点された人（同点なら宣言者から手番順で先の人）が先手になる。</li>
+          <li>「1周目のヤニブ」を「禁止」にすると、各ラウンドの開始から参加者全員が1回ずつ打ち終わるまで、誰もヤニブを宣言できない（手札が7点以下でも捨てて引く）。単発でも同じ。</li>
           <li>脱落ラインは 31 / 51 / 71 / 101 / 201 / 301 点から選べる。201・301 は長期戦向け。</li>
           <li>脱落ラインを「単発」にすると<b>1ラウンド勝負</b>。誰かのヤニブ宣言でそのまま決着し、そのラウンドの加点（ヤニブ返しされた宣言者の+30を含む）が少ない順に順位が付く。同点は宣言者から手番順で先の人が上。「もう一度遊ぶ」を続けている間は各自の勝ち数（通算n勝）を数える（「設定に戻る」で0に戻る）。</li>
         </ul>
@@ -820,6 +830,15 @@
             <div class="seg" id="host-starter" role="group" aria-label="次ラウンドの先手">
               <button type="button" data-starter="zero" aria-pressed="true">0点だった人</button>
               <button type="button" data-starter="highest" aria-pressed="false">加点が高かった人</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="host-firstlap">1周目のヤニブ</label>
+            <div class="seg" id="host-firstlap" role="group" aria-label="1周目のヤニブ">
+              <button type="button" data-firstlap="true" aria-pressed="true">あり</button>
+              <button type="button" data-firstlap="false" aria-pressed="false">禁止</button>
             </div>
           </div>
         </div>
@@ -1015,7 +1034,8 @@
     jokers: 2,
     limit: 101,
     cpuLevel: 'normal',
-    starter: 'zero'
+    starter: 'zero',
+    firstLapYaniv: true // false = 1周目はヤニブ禁止
   };
 
   function loadSettings() {
@@ -1035,6 +1055,7 @@
         if (E.LIMITS.indexOf(s.limit) >= 0) settings.limit = s.limit;
         if (['weak', 'normal', 'strong'].indexOf(s.cpuLevel) >= 0) settings.cpuLevel = s.cpuLevel;
         if (['zero', 'highest'].indexOf(s.starter) >= 0) settings.starter = s.starter;
+        if (typeof s.firstLapYaniv === 'boolean') settings.firstLapYaniv = s.firstLapYaniv;
       }
     } catch (e) { /* ignore */ }
   }
@@ -1096,6 +1117,7 @@
     renderSeg($('opt-starter'), 'starter', settings.starter);
     // 単発では2ラウンド目が無いので「次ラウンドの先手」は隠す（値は保持）
     $('opt-starter').closest('.row').hidden = +settings.limit === 0;
+    renderSeg($('opt-firstlap'), 'firstlap', String(settings.firstLapYaniv));
   }
   function renderSeg(el, key, value) {
     el.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset[key] === value)); });
@@ -1114,6 +1136,12 @@
     var b = ev.target.closest('button');
     if (!b || ['zero', 'highest'].indexOf(b.dataset.starter) < 0) return;
     settings.starter = b.dataset.starter;
+    saveSettings(); renderLobby();
+  });
+  $('opt-firstlap').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button');
+    if (!b || ['true', 'false'].indexOf(b.dataset.firstlap) < 0) return;
+    settings.firstLapYaniv = b.dataset.firstlap === 'true';
     saveSettings(); renderLobby();
   });
 
@@ -1313,6 +1341,7 @@
       phase: game.phase,
       round: game.round,
       currentPlayer: game.currentPlayer,
+      roundMoves: game.roundMoves | 0,
       config: game.config,
       players: game.players.map(function (p, i) {
         var q = { name: p.name, type: p.type, score: p.score, eliminated: p.eliminated, handCount: p.hand.length };
@@ -1437,6 +1466,7 @@
     ];
     // 単発は1ラウンドで終わるので「次ラウンドの先手」は出さない
     if (!E.isSingle(c)) items.push('先手 <b>' + (c.starter === 'highest' ? '加点が高い人' : '0点の人') + '</b>');
+    if (c.firstLapYaniv === false) items.push('<b>1周目ヤニブ禁止</b>');
     if (hasCpu) items.push('CPU <b>' + ({ weak: '弱', normal: '普通', strong: '強' }[c.cpuLevel] || '普通') + '</b>');
     return items.map(function (s) { return '<span>' + s + '</span>'; }).join('');
   }
@@ -1625,10 +1655,15 @@
     var validSel = cards.length > 0 && !err;
     btnDeck.disabled = !validSel;
     btnTake.disabled = !(validSel && takeSel);
-    btnYaniv.disabled = E.handValue(vp.hand) > E.YANIV_MAX;
+    var lowHand = E.handValue(vp.hand) <= E.YANIV_MAX;
+    var lapLeft = E.firstLapRemaining(currentView()); // 1周目のヤニブ禁止: あと何人打てば宣言できるか
+    btnYaniv.disabled = !lowHand || lapLeft > 0;
     if (cards.length > 0 && err) {
       msg.className = 'msg';
       msg.textContent = err;
+    } else if (cards.length === 0 && lowHand && lapLeft > 0) {
+      msg.className = 'msg info';
+      msg.textContent = firstLapText(lapLeft);
     } else if (cards.length === 0) {
       msg.className = 'msg info';
       msg.textContent = takeable.length
@@ -1644,6 +1679,8 @@
       msg.textContent = kind + 'を捨てる（残り ' + E.handValue(rest) + '点）' + (takeSel ? '・捨て札から取る' : '');
     }
   }
+
+  function firstLapText(n) { return '1周目はヤニブできません（あと' + num(n) + '人）'; }
 
   function toggleSelect(id) {
     if (selected[id]) delete selected[id]; else selected[id] = true;
@@ -1668,7 +1705,9 @@
         game = E.applyMove(game, move, rng);
         logMove(before, before.currentPlayer, move);
       } catch (e) {
-        flash(move.type === 'yaniv' ? '手札合計が7点以下のときだけ宣言できます' : (e && e.message ? e.message : '不正な手です'));
+        flash(move.type === 'yaniv'
+          ? (E.firstLapRemaining(game) > 0 ? firstLapText(E.firstLapRemaining(game)) : '手札合計が7点以下のときだけ宣言できます')
+          : (e && e.message ? e.message : '不正な手です'));
         return;
       }
       selected = {}; takeSel = null;
@@ -1704,6 +1743,8 @@
   });
   $('btn-yaniv').addEventListener('click', function () {
     if (E.handValue(myHand()) > E.YANIV_MAX) { flash('手札合計が7点以下のときだけ宣言できます'); return; }
+    var lapLeft = E.firstLapRemaining(currentView());
+    if (lapLeft > 0) { flash(firstLapText(lapLeft)); return; }
     submitMove({ type: 'yaniv' });
   });
   $('btn-quit').addEventListener('click', function () {
@@ -2057,7 +2098,7 @@
     mode = 'local';
     localWins = null; // 設定画面からの開始は勝ち数・最下位数 0 から
     localLasts = null;
-    newGame({ players: players, jokers: settings.jokers, limit: settings.limit, cpuLevel: settings.cpuLevel, starter: settings.starter });
+    newGame({ players: players, jokers: settings.jokers, limit: settings.limit, cpuLevel: settings.cpuLevel, starter: settings.starter, firstLapYaniv: settings.firstLapYaniv });
   });
 
   // =====================================================================
@@ -2213,7 +2254,8 @@
     var lv = { weak: '弱', normal: '普通', strong: '強' }[cfg.cpuLevel] || cfg.cpuLevel;
     var st = cfg.starter === 'highest' ? '加点が高かった人' : '0点だった人';
     var lim = E.isSingle(cfg) ? '単発（1ラウンド勝負）' : '脱落ライン ' + cfg.limit + '点';
-    return '人数枠 ' + cfg.seatCount + '・ジョーカー ' + (cfg.jokers ? cfg.jokers + '枚' : 'なし') + '・' + lim + '・CPU ' + lv + (E.isSingle(cfg) ? '' : '・先手 ' + st);
+    return '人数枠 ' + cfg.seatCount + '・ジョーカー ' + (cfg.jokers ? cfg.jokers + '枚' : 'なし') + '・' + lim + '・CPU ' + lv + (E.isSingle(cfg) ? '' : '・先手 ' + st) +
+      '・1周目のヤニブ ' + (cfg.firstLapYaniv === false ? '禁止' : 'あり');
   }
 
   // ---------- host ----------
@@ -2225,6 +2267,7 @@
     $('host-level').value = lobby.config.cpuLevel;
     renderSeg($('host-starter'), 'starter', lobby.config.starter || 'zero');
     $('host-starter').closest('.row').hidden = +lobby.config.limit === 0;
+    renderSeg($('host-firstlap'), 'firstlap', String(lobby.config.firstLapYaniv !== false));
     renderSeatList($('host-seat-list'), lobby, !lobby.inGame);
     var humans = lobby.seats.filter(function (s) { return s.type === 'human'; }).length;
     $('btn-host-start').disabled = lobby.inGame || humans < 1;
@@ -2303,6 +2346,11 @@
     var b = ev.target.closest('button');
     if (!b || ['zero', 'highest'].indexOf(b.dataset.starter) < 0) return;
     hostSetConfig({ starter: b.dataset.starter });
+  });
+  $('host-firstlap').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button');
+    if (!b || ['true', 'false'].indexOf(b.dataset.firstlap) < 0) return;
+    hostSetConfig({ firstLapYaniv: b.dataset.firstlap === 'true' });
   });
 
   $('btn-host-start').addEventListener('click', function () {
