@@ -645,6 +645,8 @@
       for (var i = 0; i < legal.length; i++) if (moveKey(legal[i]) === key) { ok = true; break; }
       if (!ok) {
         if (mv.type !== 'yaniv') return 'その手は打てません';
+        // engine・UI と同じく「7点超」を先に判定する
+        if (E.handValue(state.players[state.currentPlayer].hand) > E.YANIV_MAX) return '手札合計が7点以下のときだけ宣言できます';
         if (E.firstLapRemaining && E.firstLapRemaining(state) > 0) return '1周目はヤニブできません';
         return '手札合計が7点以下のときだけ宣言できます';
       }
