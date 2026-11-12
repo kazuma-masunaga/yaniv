@@ -25,7 +25,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var PROTO = 2; // 2: 単発モード（limit 0）・脱落ライン 201/301・wins/ranking を追加。旧クライアントは参加時に弾く（lasts=最下位数、config.firstLapYaniv=1周目のヤニブ禁止、view.roundMoves は任意フィールドとして追加したので据え置き。旧クライアントは未知フィールドを無視し、禁止中のヤニブはホストが error で弾く）
+  var PROTO = 2; // 2: 単発モード（limit 0）・脱落ライン 201/301・wins/ranking を追加。旧クライアントは参加時に弾く（lasts=最下位数、config.firstLapYaniv=1周目のヤニブ禁止、view.roundMoves は任意フィールドとして追加したので据え置き。旧クライアントは未知フィールドを無視し、禁止中のヤニブはホストが error で弾く。config.seatOrder=席順ランダムも据え置き: 並べ替え後も各 view の seat が受信者の席で、旧 UI は「自分」を view.seat だけで判定するため壊れない。新クライアントには joined を再送して client.seat も更新する）
   var CODE_CHARS = '0123456789'; // room code = 4 digits ("0000".."9999")
   var TOKEN_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   var CODE_LEN = 4;
@@ -44,6 +44,24 @@
   var LIMITS = [SINGLE, 31, 51, 71, 101, 201, 301];
   function isLimit(x) { return LIMITS.indexOf(x) >= 0; }
   function isSeatIndex(x) { return typeof x === 'number' && isFinite(x) && Math.floor(x) === x && x >= 0 && x < MAX_SEATS; }
+  /** 席順（オンラインのみ）: 'join' = 入った順のまま / 'random' = 開始時に全席をシャッフル。 */
+  var SEAT_ORDERS = ['join', 'random'];
+  function isSeatOrder(x) { return SEAT_ORDERS.indexOf(x) >= 0; }
+
+  /**
+   * 一様ランダムな並べ替え（Fisher-Yates）。返り値 perm は「新しい席 j に元の席 perm[j] の中身が来る」。
+   * rnd() は [0,1) を返す関数（既定は crypto ベースの defaultRandom）。
+   */
+  function shufflePerm(n, rnd) {
+    var perm = [];
+    for (var i = 0; i < n; i++) perm.push(i);
+    for (var k = n - 1; k > 0; k--) {
+      var j = Math.floor(rnd() * (k + 1));
+      if (!(j >= 0 && j <= k)) j = k; // 範囲外の値を返す注入関数への保険
+      var t = perm[k]; perm[k] = perm[j]; perm[j] = t;
+    }
+    return perm;
+  }
 
   /**
    * CPU "thinking" wait [min, max] ms before a CPU moves. Only tables of 6+ seats are sped up
@@ -180,6 +198,29 @@
     }
     if (typeof raw.draw !== 'string' || raw.draw.length > 16) return null;
     return { type: 'play', discard: discard, draw: raw.draw };
+  }
+
+  /**
+   * 席の中身を perm どおりに移動する（純関数）。perm[j] = 新しい席 j に来る元の席。
+   * 席オブジェクト（名前・種別・conn・seatToken・接続状態・ホストか等）と、席ごとの wins / lasts が一緒に動く。
+   * 返り値 { seats, wins, lasts, hostSeat }（hostSeat = isHost の席。いなければ 0）。
+   */
+  function permuteSeatData(data, perm) {
+    var n = data.seats.length;
+    if (!Array.isArray(perm) || perm.length !== n) throw new Error('bad perm');
+    var seen = {};
+    for (var i = 0; i < n; i++) {
+      if (!isInt(perm[i]) || perm[i] < 0 || perm[i] >= n || seen[perm[i]]) throw new Error('bad perm');
+      seen[perm[i]] = true;
+    }
+    var out = {
+      seats: perm.map(function (k) { return data.seats[k]; }),
+      wins: perm.map(function (k) { return (data.wins && data.wins[k]) | 0; }),
+      lasts: perm.map(function (k) { return (data.lasts && data.lasts[k]) | 0; }),
+      hostSeat: 0
+    };
+    for (var j = 0; j < n; j++) if (out.seats[j] && out.seats[j].isHost) { out.hostSeat = j; break; }
+    return out;
   }
 
   // =====================================================================
@@ -455,8 +496,9 @@
   // Host
   // =====================================================================
   /**
-   * createHost({ transport, engine, rng?, hostName, random?, codeGen?, cpuDelay? })
+   * createHost({ transport, engine, rng?, hostName, random?, seatRandom?, codeGen?, cpuDelay? })
    * Call host.open() (Promise<roomCode>) before anything else.
+   * seatRandom: 席順シャッフル用の [0,1) 乱数（既定は random = crypto の defaultRandom。ゲームの rng とは別）。
    */
   function createHost(opts) {
     opts = opts || {};
@@ -466,12 +508,15 @@
     if (!E) throw new Error('engine required');
     var random = typeof opts.random === 'function' ? opts.random : defaultRandom;
     var rng = typeof opts.rng === 'function' ? opts.rng : E.createRng((random() * 0xffffffff) >>> 0);
+    var seatRandom = typeof opts.seatRandom === 'function' ? opts.seatRandom : random;
     var codeGen = typeof opts.codeGen === 'function' ? opts.codeGen : function () { return randomCode(random); };
     var cpuDelay = Array.isArray(opts.cpuDelay) ? opts.cpuDelay : null; // null = cpuDelayFor(number of CPUs)
     var now = typeof opts.now === 'function' ? opts.now : function () { return Date.now(); };
 
-    var config = { jokers: 2, limit: 101, cpuLevel: 'normal', starter: 'zero', firstLapYaniv: true, seatCount: 3 };
+    var config = { jokers: 2, limit: 101, cpuLevel: 'normal', starter: 'zero', firstLapYaniv: true, seatOrder: 'random', seatCount: 3 };
     var seats = [];
+    // ホスト自身の席。席順ランダムで開始すると 0 以外になる（席 index = engine の player index は常に保つ）。
+    var hostSeat = 0;
     // 単発の勝ち数（席ごと）。ゲーム state の外で持つ（engine の決定論に影響させない）。
     // その席の人が入れ替わったら 0 に戻す。同じ seatToken での再接続では維持。部屋を閉じれば消える。
     var wins = [];
@@ -494,6 +539,7 @@
       seats = [];
       for (var i = 0; i < config.seatCount; i++) seats.push(makeSeat(i));
       seats[0] = { type: 'human', name: sanitizeName(opts.hostName) || 'ホスト', token: null, conn: null, connected: true, isHost: true, lastStamp: -Infinity };
+      hostSeat = 0;
       wins = seats.map(function () { return 0; });
       lasts = seats.map(function () { return 0; });
     }
@@ -795,6 +841,7 @@
       if (patch.cpuLevel != null) { if (['weak', 'normal', 'strong'].indexOf(patch.cpuLevel) < 0) throw new Error('cpuLevel'); next.cpuLevel = patch.cpuLevel; }
       if (patch.starter != null) { if (['zero', 'highest'].indexOf(patch.starter) < 0) throw new Error('starter'); next.starter = patch.starter; }
       if (patch.firstLapYaniv != null) { if (typeof patch.firstLapYaniv !== 'boolean') throw new Error('firstLapYaniv'); next.firstLapYaniv = patch.firstLapYaniv; }
+      if (patch.seatOrder != null) { if (!isSeatOrder(patch.seatOrder)) throw new Error('seatOrder'); next.seatOrder = patch.seatOrder; }
       if (patch.seatCount != null) {
         if (!isInt(patch.seatCount) || patch.seatCount < MIN_SEATS || patch.seatCount > MAX_SEATS) throw new Error('seatCount must be ' + MIN_SEATS + '-' + MAX_SEATS);
         var highest = 0;
@@ -819,29 +866,52 @@
     host.lasts = function () { return lasts.slice(); };
     host.state = function () { return state; };
     host.phase = function () { return state ? state.phase : 'lobby'; };
-    host.view = function () { return viewFor(0); };
-    host.seat = 0;
+    host.view = function () { return viewFor(hostSeat); };
+    /** ホスト自身の席（席順ランダムで開始すると 0 以外になる）。 */
+    Object.defineProperty(host, 'seat', { enumerable: true, get: function () { return hostSeat; } });
+
+    /** Empty seats become CPU (in place). Throws unless there are 2+ seats and 1+ human. */
+    function fillEmptyWithCpu() {
+      if (seats.length < 2) throw new Error('need 2 seats');
+      var humans = 0;
+      for (var i = 0; i < seats.length; i++) if (seats[i].type === 'human') humans++;
+      if (humans < 1) throw new Error('人間が1人以上必要です');
+      for (var j = 0; j < seats.length; j++) {
+        if (seats[j].type !== 'empty') continue;
+        seats[j] = { type: 'cpu', name: 'CPU ' + (j + 1), token: null, conn: null, connected: false, isHost: false, lastStamp: -Infinity };
+        resetWins(j);
+      }
+    }
 
     /** Build engine players from the seats (the seats are the source of truth). Empty seats become CPU. */
     function playersFromSeats() {
-      if (seats.length < 2) throw new Error('need 2 seats');
-      var humans = 0;
-      var players = seats.map(function (s, i) {
-        if (s.type === 'empty') {
-          seats[i] = { type: 'cpu', name: 'CPU ' + (i + 1), token: null, conn: null, connected: false, isHost: false, lastStamp: -Infinity };
-          resetWins(i);
-          return { name: seats[i].name, type: 'cpu' };
-        }
+      fillEmptyWithCpu();
+      return seats.map(function (s, i) {
         if (s.type === 'cpu') return { name: s.name || 'CPU ' + (i + 1), type: 'cpu' };
-        humans++;
         return { name: s.name, type: 'human' };
       });
-      if (humans < 1) throw new Error('人間が1人以上必要です');
-      return players;
+    }
+
+    /**
+     * 席順ランダム: 全席（ホスト・人間・CPU）の中身を席 index 間で移動する。perm[j] = 新しい席 j に来る元の席。
+     * 名前・種別・conn・seatToken・接続状態・スタンプの時刻（席オブジェクトごと）と wins / lasts が人に付いて動く。
+     * 席が変わった参加者には joined を再送して新しい席番号を伝える（view.seat も新しい席になる）。
+     */
+    function permuteSeats(perm) {
+      var moved = permuteSeatData({ seats: seats, wins: wins, lasts: lasts }, perm);
+      seats = moved.seats; wins = moved.wins; lasts = moved.lasts; hostSeat = moved.hostSeat;
+      for (var j = 0; j < seats.length; j++) {
+        if (perm[j] === j) continue;
+        var s = seats[j];
+        if (s.isHost || s.type !== 'human' || !s.conn || !s.connected) continue;
+        sendSafe(s.conn, { t: 'joined', seat: j, seatToken: s.token, roomCode: host.roomCode });
+      }
     }
 
     host.start = function () {
       if (state) throw new Error('already started');
+      fillEmptyWithCpu();
+      if (config.seatOrder === 'random') permuteSeats(shufflePerm(seats.length, seatRandom));
       var players = playersFromSeats();
       state = E.createGame({ players: players, jokers: config.jokers, limit: config.limit, cpuLevel: config.cpuLevel, starter: config.starter, firstLapYaniv: config.firstLapYaniv }, rng);
       state = E.startRound(state, rng);
@@ -888,12 +958,12 @@
     };
 
     host.submitMove = function (move) {
-      var err = doMove(0, move);
+      var err = doMove(hostSeat, move);
       return err ? { ok: false, message: err } : { ok: true };
     };
 
     host.replaceWithCpu = function (seat) {
-      if (!isInt(seat) || seat <= 0 || seat >= seats.length) throw new Error('bad seat');
+      if (!isInt(seat) || seat < 0 || seat >= seats.length || seat === hostSeat || seats[seat].isHost) throw new Error('bad seat');
       var s = seats[seat];
       if (s.type !== 'human') return;
       if (s.conn) { var c = s.conn; s.conn = null; sendSafe(c, { t: 'closed', reason: 'cpu' }); try { c.close('cpu'); } catch (e) { /* ignore */ } }
@@ -922,7 +992,7 @@
     };
 
     host.kick = function (seat) {
-      if (!isInt(seat) || seat <= 0 || seat >= seats.length) throw new Error('bad seat');
+      if (!isInt(seat) || seat < 0 || seat >= seats.length || seat === hostSeat || seats[seat].isHost) throw new Error('bad seat');
       var s = seats[seat];
       if (s.type !== 'human') return;
       if (s.conn) { var c = s.conn; s.conn = null; sendSafe(c, { t: 'closed', reason: 'kicked' }); try { c.close('kicked'); } catch (e) { /* ignore */ } }
@@ -948,7 +1018,7 @@
     };
 
     /** Host's own stamp: goes through the same validation/rate limit as a client's. Returns true if delivered. */
-    host.sendStamp = function (id) { return doStamp(0, id); };
+    host.sendStamp = function (id) { return doStamp(hostSeat, id); };
 
     host.onLobbyChange = function (fn) { lobbyHandlers.push(fn); };
     host.onStateChange = function (fn) { stateHandlers.push(fn); };
@@ -1046,6 +1116,8 @@
           starter: ['zero', 'highest'].indexOf(cfg.starter) >= 0 ? cfg.starter : 'zero',
           // 古いホストは送らない → true（=1周目でも宣言できる、従来どおり）
           firstLapYaniv: typeof cfg.firstLapYaniv === 'boolean' ? cfg.firstLapYaniv : true,
+          // 席順。不正値は既定の 'random'。古いホストは送らない（=並べ替えない）ので 'join' と表示する
+          seatOrder: cfg.seatOrder === undefined ? 'join' : (isSeatOrder(cfg.seatOrder) ? cfg.seatOrder : 'random'),
           seatCount: isInt(cfg.seatCount) && cfg.seatCount >= MIN_SEATS && cfg.seatCount <= MAX_SEATS ? cfg.seatCount : Math.max(MIN_SEATS, Math.min(MAX_SEATS, seats.length))
         }
       };
@@ -1287,6 +1359,10 @@
     isLimit: isLimit,
     isWinsArray: isWinsArray,
     isSeatIndex: isSeatIndex,
+    SEAT_ORDERS: SEAT_ORDERS.slice(),
+    isSeatOrder: isSeatOrder,
+    shufflePerm: shufflePerm,
+    permuteSeatData: permuteSeatData,
     cpuDelayFor: cpuDelayFor,
     isStampId: isStampId,
     randomCode: randomCode,

@@ -23,7 +23,8 @@ async function setupRoom(opts = {}) {
     codeGen: opts.codeGen
   });
   const code = await host.open();
-  if (opts.config) host.setConfig(opts.config);
+  // 既存テストは「入った順」（席の移動なし）を前提にする。席順ランダムは seatorder.test.js で検証
+  host.setConfig(Object.assign({ seatOrder: 'join' }, opts.config || {}));
   const clients = [];
   for (const name of opts.names || []) {
     const c = await joinClient(hub, code, name);
@@ -334,6 +335,7 @@ test('client auto-reconnects with backoff after the connection drops', async () 
   const hub = N.createMemoryHub();
   const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['2222']) });
   await host.open();
+  host.setConfig({ seatOrder: 'join' });
   const ct = hub.createTransport();
   const a = N.createClient({ transport: ct, roomCode: '2222', name: 'A', connectTimeoutMs: 0, backoff: [5, 10] });
   const disconnects = [], joined = [];
@@ -400,6 +402,7 @@ test('host survives unknown / malformed messages; client survives malformed host
   const hub = N.createMemoryHub();
   const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['3333']) });
   await host.open();
+  host.setConfig({ seatOrder: 'join' });
   const errors = [];
   host.onError((e) => errors.push(e));
   // raw connection speaking garbage
@@ -644,6 +647,7 @@ test('#3 reconnect loop survives connect() returning undefined / throwing and ke
   const hub = N.createMemoryHub();
   const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['6060']) });
   await host.open();
+  host.setConfig({ seatOrder: 'join' });
   const ft = flakyTransport(hub.createTransport());
   const a = N.createClient({ transport: ft, roomCode: '6060', name: 'A', connectTimeoutMs: 0, backoff: [3, 3] });
   const disconnects = [], joined = [];
@@ -679,6 +683,7 @@ test('#3 reconnect loop survives transport.open() failing (open-failed path)', a
   const hub = N.createMemoryHub();
   const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['7070']) });
   await host.open();
+  host.setConfig({ seatOrder: 'join' });
   // first transport joins, then is closed entirely (so ensureOpen must re-open); the re-open fails for a while
   const innerT = hub.createTransport();
   const ft = flakyTransport(innerT);
@@ -716,6 +721,7 @@ test('#4 second tab with the same seatToken takes the seat; the old tab gets clo
   const hub = N.createMemoryHub();
   const host = N.createHost({ transport: hub.createTransport(), engine: E, hostName: 'H', cpuDelay: [0, 0], codeGen: seqCodes(['8888']) });
   await host.open();
+  host.setConfig({ seatOrder: 'join' });
   const tab1 = await joinClient(hub, '8888', 'A', { backoff: [2, 2] });
   const token = tab1.info.seatToken;
   // without the fix the two tabs steal the seat from each other forever; bound the wait so that shows as a failure
@@ -805,7 +811,7 @@ async function stampRoom(opts = {}) {
     hostName: 'H', cpuDelay: [0, 0], now: () => clock.t
   });
   const code = await host.open();
-  host.setConfig(opts.config || { seatCount: 3 });
+  host.setConfig(Object.assign({ seatOrder: 'join' }, opts.config || { seatCount: 3 }));
   host.stamps = [];
   host.onStamp((s) => host.stamps.push(s));
   const clients = [];

@@ -617,7 +617,8 @@
     .actions { gap: 6px; }
     .actions button { min-height: 44px; padding: 6px 8px; white-space: nowrap; border-radius: 12px; }
     .actions .btn-yaniv { font-size: 1.1rem; }
-    .game .waiting { font-size: 0.85rem; }
+    /* 行の高さを詰める（ログ4行＋「○○の手番」行が同時に出ても 390x763 で 1〜2px はみ出さないように） */
+    .game .waiting { font-size: 0.85rem; line-height: 1.2; }
   }
   /* 背の低い画面（iPhone SE など）: さらに詰め、3つのボタンを横1行に */
   @media (max-width: 600px) and (max-height: 760px) {
@@ -751,6 +752,7 @@
           <li>累計が脱落ライン以上で脱落。最後に残った1人が勝ち。前ラウンドで0点だった人が次の先手。</li>
           <li>「次ラウンドの先手」を「加点が高かった人」にすると、前ラウンドで最も多く加点された人（同点なら宣言者から手番順で先の人）が先手になる。</li>
           <li>「1周目のヤニブ」を「禁止」にすると、各ラウンドの開始から参加者全員が1回ずつ打ち終わるまで、誰もヤニブを宣言できない（手札が7点以下でも捨てて引く）。単発でも同じ。</li>
+          <li>オンラインの「順番」を「ランダム」（既定）にすると、ホストが「開始」したときに全員（ホスト・CPU を含む）の手番の順がシャッフルされる。「もう一度遊ぶ」では同じ順番のまま、「部屋のロビーへ」から開始し直すとあらためてシャッフル。「入った順」なら参加した順のまま。</li>
           <li>脱落ラインは 31 / 51 / 71 / 101 / 201 / 301 点から選べる。201・301 は長期戦向け。</li>
           <li>脱落ラインを「単発」にすると<b>1ラウンド勝負</b>。誰かのヤニブ宣言でそのまま決着し、そのラウンドの加点（ヤニブ返しされた宣言者の+30を含む）が少ない順に順位が付く。同点は宣言者から手番順で先の人が上。「もう一度遊ぶ」を続けている間は各自の勝ち数（通算n勝）を数える（「設定に戻る」で0に戻る）。</li>
         </ul>
@@ -842,11 +844,20 @@
             </div>
           </div>
         </div>
+        <div class="row">
+          <div class="field">
+            <label for="host-seatorder">順番</label>
+            <div class="seg" id="host-seatorder" role="group" aria-label="順番">
+              <button type="button" data-seatorder="join" aria-pressed="false">入った順</button>
+              <button type="button" data-seatorder="random" aria-pressed="true">ランダム</button>
+            </div>
+          </div>
+        </div>
 
         <div>
           <span class="eyebrow">参加者</span>
           <div class="seat-list" id="host-seat-list"></div>
-          <p class="small muted" style="margin-top:6px;">空席は開始時に CPU になります。</p>
+          <p class="small muted" style="margin-top:6px;">空席は開始時に CPU になります。<span id="host-order-note">開始時に順番がシャッフルされます。</span></p>
         </div>
 
         <p class="msg" id="host-room-msg" aria-live="polite"></p>
@@ -881,6 +892,7 @@
         <div>
           <span class="eyebrow">参加者</span>
           <div class="seat-list" id="join-seat-list"></div>
+          <p class="small muted" id="join-order-note" style="margin-top:6px;" hidden>開始時に順番がシャッフルされます。</p>
         </div>
         <p class="small muted" id="join-config"></p>
         <div class="waiting"><span>ホストの開始を待っています</span><span class="dots"></span></div>
@@ -2255,7 +2267,8 @@
     var st = cfg.starter === 'highest' ? '加点が高かった人' : '0点だった人';
     var lim = E.isSingle(cfg) ? '単発（1ラウンド勝負）' : '脱落ライン ' + cfg.limit + '点';
     return '人数枠 ' + cfg.seatCount + '・ジョーカー ' + (cfg.jokers ? cfg.jokers + '枚' : 'なし') + '・' + lim + '・CPU ' + lv + (E.isSingle(cfg) ? '' : '・先手 ' + st) +
-      '・1周目のヤニブ ' + (cfg.firstLapYaniv === false ? '禁止' : 'あり');
+      '・1周目のヤニブ ' + (cfg.firstLapYaniv === false ? '禁止' : 'あり') +
+      '・順番 ' + (cfg.seatOrder === 'join' ? '入った順' : 'ランダム');
   }
 
   // ---------- host ----------
@@ -2268,6 +2281,9 @@
     renderSeg($('host-starter'), 'starter', lobby.config.starter || 'zero');
     $('host-starter').closest('.row').hidden = +lobby.config.limit === 0;
     renderSeg($('host-firstlap'), 'firstlap', String(lobby.config.firstLapYaniv !== false));
+    // 席順: 'random'（既定）は開始時に全席（ホスト・CPU 含む）をシャッフル
+    renderSeg($('host-seatorder'), 'seatorder', lobby.config.seatOrder === 'join' ? 'join' : 'random');
+    $('host-order-note').hidden = lobby.config.seatOrder === 'join';
     renderSeatList($('host-seat-list'), lobby, !lobby.inGame);
     var humans = lobby.seats.filter(function (s) { return s.type === 'human'; }).length;
     $('btn-host-start').disabled = lobby.inGame || humans < 1;
@@ -2352,6 +2368,11 @@
     if (!b || ['true', 'false'].indexOf(b.dataset.firstlap) < 0) return;
     hostSetConfig({ firstLapYaniv: b.dataset.firstlap === 'true' });
   });
+  $('host-seatorder').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button');
+    if (!b || ['join', 'random'].indexOf(b.dataset.seatorder) < 0) return;
+    hostSetConfig({ seatOrder: b.dataset.seatorder });
+  });
 
   $('btn-host-start').addEventListener('click', function () {
     if (!host) return;
@@ -2370,6 +2391,7 @@
     $('join-room-code').textContent = client ? client.roomCode : lobby.roomCode;
     renderSeatList($('join-seat-list'), lobby, false);
     $('join-config').textContent = configText(lobby.config);
+    $('join-order-note').hidden = lobby.config.seatOrder !== 'random';
     if (!lobby.inGame && view) {
       // host went back to its lobby: drop the finished game
       view = null; lastMoveNo = -1; lastRoundLogged = 0;

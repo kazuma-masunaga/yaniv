@@ -229,7 +229,8 @@ async function setupRoom(opts = {}) {
     cpuDelay: [0, 0]
   });
   const code = await host.open();
-  if (opts.config) host.setConfig(opts.config);
+  // 既存テストは「入った順」（席の移動なし）を前提にする。席順ランダムは seatorder.test.js で検証
+  host.setConfig(Object.assign({ seatOrder: 'join' }, opts.config || {}));
   const clients = [];
   for (const name of opts.names || []) {
     const c = N.createClient({ transport: hub.createTransport(), roomCode: code, name, connectTimeoutMs: 0, backoff: [1, 1] });
