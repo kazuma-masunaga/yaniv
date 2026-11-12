@@ -517,6 +517,9 @@
     var seats = [];
     // ホスト自身の席。席順ランダムで開始すると 0 以外になる（席 index = engine の player index は常に保つ）。
     var hostSeat = 0;
+    // 部屋に入った順番（席の中身に joinSeq として持たせる）。ホストは 0、新しく座った人ごとに 1, 2, …。
+    // 同じ seatToken の再接続では変えない。ロビーに戻ったときの前詰め（入った順）に使う。
+    var nextJoinSeq = 1;
     // 単発の勝ち数（席ごと）。ゲーム state の外で持つ（engine の決定論に影響させない）。
     // その席の人が入れ替わったら 0 に戻す。同じ seatToken での再接続では維持。部屋を閉じれば消える。
     var wins = [];
@@ -538,7 +541,7 @@
     function initSeats() {
       seats = [];
       for (var i = 0; i < config.seatCount; i++) seats.push(makeSeat(i));
-      seats[0] = { type: 'human', name: sanitizeName(opts.hostName) || 'ホスト', token: null, conn: null, connected: true, isHost: true, lastStamp: -Infinity };
+      seats[0] = { type: 'human', name: sanitizeName(opts.hostName) || 'ホスト', token: null, conn: null, connected: true, isHost: true, lastStamp: -Infinity, joinSeq: 0 };
       hostSeat = 0;
       wins = seats.map(function () { return 0; });
       lasts = seats.map(function () { return 0; });
@@ -744,7 +747,7 @@
       var free = -1;
       for (var i = 0; i < seats.length; i++) if (seats[i].type === 'empty') { free = i; break; }
       if (free < 0) { sendSafe(conn, { t: 'reject', reason: 'full' }); conn.close('rejected'); return; }
-      seats[free] = { type: 'human', name: name, token: randomToken(random), conn: conn, connected: true, isHost: false, lastStamp: -Infinity };
+      seats[free] = { type: 'human', name: name, token: randomToken(random), conn: conn, connected: true, isHost: false, lastStamp: -Infinity, joinSeq: nextJoinSeq++ };
       resetWins(free); // 別の人がこの席に座った
       sendSafe(conn, { t: 'joined', seat: free, seatToken: seats[free].token, roomCode: host.roomCode });
       broadcastLobby();
@@ -897,8 +900,8 @@
      * 名前・種別・conn・seatToken・接続状態・スタンプの時刻（席オブジェクトごと）と wins / lasts が人に付いて動く。
      * 席が変わった参加者には joined を再送して新しい席番号を伝える（view.seat も新しい席になる）。
      */
-    function permuteSeats(perm) {
-      var moved = permuteSeatData({ seats: seats, wins: wins, lasts: lasts }, perm);
+    function permuteSeats(perm, moved) {
+      moved = moved || permuteSeatData({ seats: seats, wins: wins, lasts: lasts }, perm);
       seats = moved.seats; wins = moved.wins; lasts = moved.lasts; hostSeat = moved.hostSeat;
       for (var j = 0; j < seats.length; j++) {
         if (perm[j] === j) continue;
@@ -908,13 +911,28 @@
       }
     }
 
+    /** CPU 席の名前を席番号に合わせる（シャッフル後に「CPU 4」が席1にいる、とならないように）。人間の名前は変えない。 */
+    function cpuNameFor(j) { return 'CPU ' + (j + 1); }
+
     host.start = function () {
       if (state) throw new Error('already started');
       fillEmptyWithCpu();
-      if (config.seatOrder === 'random') permuteSeats(shufflePerm(seats.length, seatRandom));
-      var players = playersFromSeats();
-      state = E.createGame({ players: players, jokers: config.jokers, limit: config.limit, cpuLevel: config.cpuLevel, starter: config.starter, firstLapYaniv: config.firstLapYaniv }, rng);
-      state = E.startRound(state, rng);
+      var n = seats.length;
+      var perm = config.seatOrder === 'random' ? shufflePerm(n, seatRandom) : null;
+      // 並べ替え後の並びでゲームを先に作り、成功してから席を動かす（createGame が投げても並べ替えだけ残らない）
+      var moved = perm ? permuteSeatData({ seats: seats, wins: wins, lasts: lasts }, perm) : null;
+      var order = moved ? moved.seats : seats;
+      var players = order.map(function (s, j) {
+        if (s.type === 'cpu') return { name: perm ? cpuNameFor(j) : (s.name || cpuNameFor(j)), type: 'cpu' };
+        return { name: s.name, type: 'human' };
+      });
+      var next = E.createGame({ players: players, jokers: config.jokers, limit: config.limit, cpuLevel: config.cpuLevel, starter: config.starter, firstLapYaniv: config.firstLapYaniv }, rng);
+      next = E.startRound(next, rng);
+      if (perm) {
+        permuteSeats(perm, moved);
+        for (var j = 0; j < seats.length; j++) if (seats[j].type === 'cpu') seats[j].name = cpuNameFor(j);
+      }
+      state = next;
       moveNo = 0;
       winCounted = false;
       broadcastLobby();
@@ -944,6 +962,21 @@
       return state;
     };
 
+    /**
+     * ロビーに戻ったとき: 人のいる席を部屋に入った順（joinSeq）に前へ詰め、残りを空席にする。
+     * 席順ランダムで後ろの席になったホストも席 0 に戻り、人数枠を人数まで減らせる。「入った順」で始めれば入った順になる。
+     * 席が変わった参加者には joined を再送（permuteSeats）。
+     */
+    function compactSeats() {
+      var idx = [];
+      for (var i = 0; i < seats.length; i++) idx.push(i);
+      var seq = function (k) { var s = seats[k]; return s.type === 'empty' ? Infinity : (isInt(s.joinSeq) ? s.joinSeq : (s.isHost ? 0 : 1e9)); };
+      idx.sort(function (a, b) { return (seq(a) - seq(b)) || (a - b); });
+      var same = true;
+      for (var j = 0; j < idx.length; j++) if (idx[j] !== j) { same = false; break; }
+      if (!same) permuteSeats(idx);
+    }
+
     host.backToLobby = function () {
       clearCpu();
       state = null;
@@ -953,6 +986,7 @@
         // ロビーに戻ったら全員の勝ち数・最下位数を 0 に（ローカルの「設定に戻る」と同じ扱い）
         resetWins(i);
       }
+      compactSeats();
       broadcastLobby();
       callAll(stateHandlers, null);
     };

@@ -166,7 +166,7 @@ test('setConfig seatOrder: default random, validated, locked in game, carried in
 });
 
 test("random start: seats shuffled by the injected seatRandom; hands, views, client seats and host seat agree", async () => {
-  // 4 seats: host + A + B + 1 CPU; rnd -> 0 => perm [1,2,3,0]: A=0, B=1, CPU=2, host=3
+  // 4 seats: host + A + B + 1 CPU; rnd -> 0 => perm [1,2,3,0]: A=0, B=1, CPU=2, host=3（CPU の名前は新しい席番号で付け直す）
   const room = await setupRoom({ names: ['A', 'B'], config: { seatCount: 4, limit: 0 } });
   const { host, clients, hub, seatRandom } = room;
   const [a, b] = clients;
@@ -175,14 +175,14 @@ test("random start: seats shuffled by the injected seatRandom; hands, views, cli
   await hub.settle();
   assert.equal(seatRandom.calls, 3, 'n-1 draws for n seats');
   const st = host.state();
-  assert.deepEqual(st.players.map((p) => p.name), ['A', 'B', 'CPU 4', 'ホスト']);
+  assert.deepEqual(st.players.map((p) => p.name), ['A', 'B', 'CPU 3', 'ホスト']);
   assert.deepEqual(st.players.map((p) => p.type), ['human', 'human', 'cpu', 'human']);
   assert.equal(host.seat, 3);
   // lobby: same order, isHost follows the host
   const lob = host.lobby();
-  assert.deepEqual(lob.seats.map((s) => s.name), ['A', 'B', 'CPU 4', 'ホスト']);
+  assert.deepEqual(lob.seats.map((s) => s.name), ['A', 'B', 'CPU 3', 'ホスト']);
   assert.deepEqual(lob.seats.map((s) => !!s.isHost), [false, false, false, true]);
-  assert.deepEqual(last(a.lobbies).seats.map((s) => s.name), ['A', 'B', 'CPU 4', 'ホスト']);
+  assert.deepEqual(last(a.lobbies).seats.map((s) => s.name), ['A', 'B', 'CPU 3', 'ホスト']);
   // clients were told their new seat (joined re-sent with the same token)
   assert.equal(a.seat, 0); assert.equal(b.seat, 1);
   assert.deepEqual(last(a.joinedMsgs), { seat: 0, seatToken: a.info.seatToken, roomCode: room.code });
@@ -242,20 +242,22 @@ test('restart keeps the order (no shuffle, wins kept per person); back to lobby 
   assert.equal(a.joinedMsgs.length + b.joinedMsgs.length, joinedBefore, 'no seat re-notification on restart');
   assert.equal(last(a.views).seat, 0);
   await playToGameOver(room);
-  // back to the lobby: order stays as it was (holes / names), wins reset; start shuffles again
+  // back to the lobby: seats go back to join order (host 0, A 1, B 2), wins reset; start shuffles again
   host.backToLobby();
   await hub.settle();
-  assert.deepEqual(host.lobby().seats.map((s) => s.name), ['A', 'B', 'ホスト']);
+  assert.deepEqual(host.lobby().seats.map((s) => s.name), ['ホスト', 'A', 'B']);
+  assert.equal(host.seat, 0);
+  assert.equal(a.seat, 1); assert.equal(b.seat, 2);
   assert.deepEqual(host.wins(), [0, 0, 0]);
   host.start();
   await hub.settle();
   assert.ok(seatRandom.calls > calls1, 'start after backToLobby draws again');
-  // [A,B,H] rotated again -> [B,H,A]
-  assert.deepEqual(host.state().players.map((p) => p.name), ['B', 'ホスト', 'A']);
-  assert.equal(host.seat, 1);
-  assert.equal(a.seat, 2); assert.equal(b.seat, 0);
-  assert.equal(last(a.views).seat, 2); assert.equal(last(b.views).seat, 0);
-  assertViewIsSafe(last(a.views), 2, host.state());
+  // [H,A,B] rotated again -> [A,B,H]
+  assert.deepEqual(host.state().players.map((p) => p.name), ['A', 'B', 'ホスト']);
+  assert.equal(host.seat, 2);
+  assert.equal(a.seat, 0); assert.equal(b.seat, 1);
+  assert.equal(last(a.views).seat, 0); assert.equal(last(b.views).seat, 1);
+  assertViewIsSafe(last(a.views), 0, host.state());
   await playToGameOver(room);
   host.close();
 });
@@ -327,17 +329,18 @@ test('after a shuffle: kick / replaceWithCpu act on the new seats; the host seat
   assert.equal(a.closed[0].reason, 'kicked');
   assert.deepEqual(host.state().players.map((p) => p.type), ['cpu', 'cpu', 'human']);
   await playToGameOver(room);
-  // lobby kick after the shuffle: host still on seat 2
+  // lobby kick after the game: the seats were compacted (host back on seat 0, A/B became CPU -> empty)
   host.backToLobby();
   await hub.settle();
-  assert.equal(host.seat, 2);
+  assert.equal(host.seat, 0);
+  assert.deepEqual(host.lobby().seats.map((s) => s.type), ['human', 'empty', 'empty']);
   const c = await joinClient(hub, room.code, 'C');
-  assert.equal(c.info.seat, 0);
-  assert.throws(() => host.kick(2), /bad seat/);
-  host.kick(0);
+  assert.equal(c.info.seat, 1);
+  assert.throws(() => host.kick(0), /bad seat/);
+  host.kick(1);
   await hub.settle();
   assert.equal(c.closed[0].reason, 'kicked');
-  assert.equal(host.lobby().seats[0].type, 'empty');
+  assert.equal(host.lobby().seats[1].type, 'empty');
   host.close();
 });
 
@@ -362,5 +365,88 @@ test('8 seats random (host + 2 clients + 5 CPU) auto-run to gameOver with no err
   assert.equal(host.state().players.filter((p) => !p.eliminated).length, 1);
   assert.deepEqual(errors, []);
   clients.forEach((c) => assert.equal(c.errors.length, 0, JSON.stringify(c.errors)));
+  host.close();
+});
+
+test('backToLobby compacts seats to join order: host -> seat 0, humans first, seat count can shrink; join start / reconnect / seats updated', async () => {
+  // 6 seats, host + A + B + C; A leaves the lobby slot via kick and D joins (new joinSeq) -> join order H, B, C, D
+  const room = await setupRoom({ names: ['A', 'B', 'C'], config: { seatCount: 6, limit: 0 } });
+  const { host, hub, clients } = room;
+  host.kick(1); // A
+  await hub.settle();
+  const d = await joinClient(hub, room.code, 'D'); // takes the free seat 1, but joined last
+  assert.equal(d.info.seat, 1);
+  const [, b, c] = clients;
+  const people = { B: b, C: c, D: d };
+  // perm from rnd 0 = rotation: seats [H, D, B, C, e, e] -> [D, B, C, CPU, CPU, H]
+  host.start();
+  await hub.settle();
+  assert.deepEqual(host.state().players.map((p) => p.name), ['D', 'B', 'C', 'CPU 4', 'CPU 5', 'ホスト']);
+  assert.equal(host.seat, 5);
+  assert.throws(() => host.setConfig({ seatCount: 4 }), /ゲーム中/);
+  await playToGameOver({ host, hub, clients: [b, c, d] });
+  const joinedBefore = { B: b.joinedMsgs.length, C: c.joinedMsgs.length, D: d.joinedMsgs.length };
+  // (a) back to the lobby: host seat 0, humans packed to the front in join order (H, B, C, D), rest empty
+  host.backToLobby();
+  await hub.settle();
+  assert.equal(host.seat, 0);
+  assert.deepEqual(host.lobby().seats.map((s) => s.name || s.type), ['ホスト', 'B', 'C', 'D', 'empty', 'empty']);
+  assert.deepEqual(host.lobby().seats.map((s) => !!s.isHost), [true, false, false, false, false, false]);
+  assert.deepEqual(last(b.lobbies).seats.map((s) => s.name || s.type), ['ホスト', 'B', 'C', 'D', 'empty', 'empty']);
+  // (d) every moved client got its new seat
+  assert.deepEqual([b.seat, c.seat, d.seat], [1, 2, 3]);
+  // in-game seats were D=0, B=1, C=2: only D moved (0 -> 3) and is re-notified; B / C kept their seats
+  assert.equal(b.joinedMsgs.length, joinedBefore.B);
+  assert.equal(c.joinedMsgs.length, joinedBefore.C);
+  assert.equal(d.joinedMsgs.length, joinedBefore.D + 1, 'D re-notified');
+  assert.deepEqual(last(d.joinedMsgs), { seat: 3, seatToken: d.info.seatToken, roomCode: room.code });
+  assert.equal(people.D, d);
+  // seat count can shrink down to the number of humans
+  assert.equal(host.setConfig({ seatCount: 4 }).seatCount, 4);
+  assert.throws(() => host.setConfig({ seatCount: 3 }), /減らせません/);
+  // (c) reload with the saved token comes back to the compacted seat
+  const tokenC = c.info.seatToken;
+  c.leave();
+  await hub.settle();
+  const c2 = await joinClient(hub, room.code, 'C', { seatToken: tokenC });
+  assert.equal(c2.info.seat, 2);
+  // reconnect does not change the join order: a second backToLobby keeps H, B, C, D
+  // (b) 'join' start after compaction = join order, nobody moves
+  host.setConfig({ seatOrder: 'join' });
+  host.start();
+  await hub.settle();
+  assert.deepEqual(host.state().players.map((p) => p.name), ['ホスト', 'B', 'C', 'D']);
+  assert.equal(host.seat, 0);
+  assert.equal(last(c2.views).seat, 2);
+  assertViewIsSafe(last(d.views), 3, host.state());
+  await playToGameOver({ host, hub, clients: [b, c2, d] });
+  host.backToLobby();
+  await hub.settle();
+  assert.deepEqual(host.lobby().seats.map((s) => s.name || s.type), ['ホスト', 'B', 'C', 'D']);
+  host.close();
+});
+
+test("start: if createGame throws, the shuffle is not applied (seats, host seat, no joined re-sent)", async () => {
+  const hub = N.createMemoryHub();
+  let failOnce = true;
+  const engine = Object.assign({}, E, { createGame: (cfg, rng) => { if (failOnce) { failOnce = false; throw new Error('boom'); } return E.createGame(cfg, rng); } });
+  const host = N.createHost({ transport: hub.createTransport(), engine, rng: E.createRng(3), random: E.createRng(4), seatRandom: () => 0, hostName: 'ホスト', cpuDelay: [0, 0] });
+  const code = await host.open();
+  const a = await joinClient(hub, code, 'A');
+  await hub.settle();
+  assert.throws(() => host.start(), /boom/);
+  await hub.settle();
+  assert.equal(host.state(), null);
+  assert.equal(host.seat, 0);
+  assert.deepEqual(host.lobby().seats.map((s) => s.name), ['ホスト', 'A', 'CPU 3']);
+  assert.equal(a.seat, 1);
+  assert.equal(a.joinedMsgs.length, 1, 'no joined re-sent');
+  // the next start works and shuffles: rotation [H, A, CPU] -> [A, CPU, H]; CPU renamed to its seat
+  host.start();
+  await hub.settle();
+  assert.deepEqual(host.state().players.map((p) => p.name), ['A', 'CPU 2', 'ホスト']);
+  assert.deepEqual(host.lobby().seats.map((s) => s.name), ['A', 'CPU 2', 'ホスト']);
+  assert.equal(a.seat, 0);
+  assert.equal(last(a.views).seat, 0);
   host.close();
 });
